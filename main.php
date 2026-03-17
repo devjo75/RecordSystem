@@ -1,6 +1,8 @@
 <?php
 session_start();
 
+require_once 'Auth.php';
+
 // Uncomment to protect this page:
 // if (!isset($_SESSION['logged_in']) || !$_SESSION['logged_in']) {
 //     header('Location: login.php');

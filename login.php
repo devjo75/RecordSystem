@@ -20,12 +20,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
          *   $user = $stmt->fetch();
          *   if ($user && password_verify($password, $user['password_hash'])) { ... }
          */
-        $demo_email    = 'admin@wmsu.edu.ph';
-        $demo_password = 'password123';
+        $demo_accounts = [
+            'admin@wmsu.edu.ph'  => ['password' => 'password123', 'role' => 'admin'],
+            'viewer@wmsu.edu.ph' => ['password' => 'viewer123',   'role' => 'viewer'],
+        ];
 
-        if ($email === $demo_email && $password === $demo_password) {
+        if (isset($demo_accounts[$email]) && $demo_accounts[$email]['password'] === $password) {
+            session_regenerate_id(true);
             $_SESSION['user_email'] = $email;
             $_SESSION['logged_in']  = true;
+            $_SESSION['user_role']  = $demo_accounts[$email]['role'];
 
             if ($remember) {
                 setcookie('remember_email', $email, time() + (30 * 24 * 3600), '/');
@@ -109,8 +113,10 @@ $remembered_email = $_COOKIE['remember_email'] ?? '';
 
             <!-- Header Section -->
             <div class="bg-crimson-700 px-8 py-10 text-center">
-                <div class="w-24 h-24 mx-auto mb-4 flex items-center justify-center">
-                    <img src="logo.png" alt="WMSU Logo" class="w-full h-full object-contain drop-shadow-lg">
+                <div class="w-20 h-20 bg-white rounded-full mx-auto mb-4 flex items-center justify-center">
+                    <svg class="w-10 h-10 text-crimson-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                    </svg>
                 </div>
                 <h1 class="text-3xl font-bold text-white font-main">Login</h1>
                 <p class="text-crimson-100 mt-2 font-secondary">or Sign up to continue</p>
@@ -118,6 +124,13 @@ $remembered_email = $_COOKIE['remember_email'] ?? '';
 
             <!-- Form Section -->
             <div class="px-8 py-10">
+
+                <?php if (isset($_GET['reason']) && $_GET['reason'] === 'unauthenticated'): ?>
+                <div class="mb-4 p-3 bg-yellow-50 border border-yellow-300 text-yellow-800 rounded-lg text-sm font-secondary flex items-center gap-2">
+                    <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                    You must be logged in to access that page.
+                </div>
+                <?php endif; ?>
 
                 <?php if ($error): ?>
                 <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm font-secondary">
