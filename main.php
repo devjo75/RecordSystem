@@ -121,120 +121,13 @@ $user_role_display = ucfirst($user_role);
 </head>
 <body class="bg-gray-100">
 
-    <!-- Mobile Menu Button -->
-    <button
-        id="mobileMenuBtn"
-        class="lg:hidden fixed top-4 left-4 z-50 bg-crimson-700 text-white p-3 rounded-lg shadow-lg hover:bg-crimson-800 transition duration-200"
-    >
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
-        </svg>
-    </button>
-
-    <!-- Sidebar -->
-    <aside
-        id="sidebar"
-        class="fixed top-0 left-0 h-full w-64 bg-crimson-900 text-white transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out z-40 shadow-2xl"
-    >
-        <!-- Logo/Brand -->
-        <div class="bg-crimson-800 px-6 py-6 border-b border-crimson-700">
-            <div class="flex items-center space-x-3">
-                <div class="w-10 h-10 bg-white rounded-lg flex items-center justify-center">
-                    <svg class="w-6 h-6 text-crimson-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
-                    </svg>
-                </div>
-                <h1 class="text-xl font-bold font-main">Dashboard</h1>
-            </div>
-        </div>
-
-        <!-- Navigation Menu -->
-        <nav class="px-4 py-6">
-            <ul class="space-y-2">
-                <!-- Dashboard -->
-                <li>
-                    <a
-                        href="main.php"
-                        class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-crimson-800 transition duration-200"
-                    >
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
-                        </svg>
-                        <span class="font-medium font-secondary">Dashboard</span>
-                    </a>
-                </li>
-
-                <!-- Archive -->
-                <li>
-                    <a
-                        href="#"
-                        class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-crimson-800 transition duration-200"
-                    >
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path>
-                        </svg>
-                        <span class="font-medium font-secondary">Archive</span>
-                    </a>
-                </li>
-
-                <!-- Receiving (active) -->
-                <li>
-                    <a
-                        href="receiving.php"
-                        class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg bg-crimson-700 transition duration-200"
-                    >
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-2m-4-1v8m0 0l3-3m-3 3L9 8m-5 5h2.586a1 1 0 01.707.293l2.414 2.414a1 1 0 00.707.293h3.172a1 1 0 00.707-.293l2.414-2.414a1 1 0 01.707-.293H20"></path>
-                        </svg>
-                        <span class="font-medium font-secondary">Receiving</span>
-                    </a>
-                </li>
-
-                <!-- Inventory -->
-                <li>
-                    <a
-                        href="#"
-                        class="nav-link flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-crimson-800 transition duration-200"
-                    >
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
-                        </svg>
-                        <span class="font-medium font-secondary">Inventory</span>
-                    </a>
-                </li>
-            </ul>
-
-            <!-- Divider -->
-            <hr class="my-6 border-crimson-700">
-
-            <!-- Logout -->
-            <ul class="space-y-2">
-                <li>
-                    <a
-                        href="logout.php"
-                        class="flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-crimson-800 transition duration-200"
-                    >
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
-                        </svg>
-                        <span class="font-medium font-secondary">Logout</span>
-                    </a>
-                </li>
-            </ul>
-        </nav>
-    </aside>
-
-    <!-- Overlay for mobile -->
-    <div
-        id="overlay"
-        class="fixed inset-0 bg-black bg-opacity-50 z-30 hidden lg:hidden"
-    ></div>
+    <?php include 'sidebar/sidebar.php'; ?>
 
     <!-- Main Content -->
     <main class="lg:ml-64 min-h-screen">
 
         <!-- Top Bar -->
-        <header class="bg-white shadow-sm sticky top-0 z-20">
+        <header class="bg-white shadow-sm fixed top-0 right-0 left-0 lg:left-64 z-20">
             <div class="px-4 sm:px-6 lg:px-8 py-4">
                 <div class="flex items-center justify-between">
                     <div class="ml-12 lg:ml-0">
@@ -268,7 +161,7 @@ $user_role_display = ucfirst($user_role);
         </header>
 
         <!-- Page Content -->
-        <div class="px-4 sm:px-6 lg:px-8 py-8">
+        <div class="px-4 sm:px-6 lg:px-8 py-8 pt-24">
 
             <div class="grid grid-cols-1">
 
@@ -371,20 +264,6 @@ $user_role_display = ucfirst($user_role);
     </main>
 
     <script>
-        // Mobile menu toggle
-        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
-        const sidebar       = document.getElementById('sidebar');
-        const overlay       = document.getElementById('overlay');
-
-        mobileMenuBtn.addEventListener('click', () => {
-            sidebar.classList.toggle('-translate-x-full');
-            overlay.classList.toggle('hidden');
-        });
-
-        overlay.addEventListener('click', () => {
-            sidebar.classList.add('-translate-x-full');
-            overlay.classList.add('hidden');
-        });
 
         // File upload handling
         const fileUpload = document.getElementById('fileUpload');
