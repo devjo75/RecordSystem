@@ -14,11 +14,14 @@ $error   = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $document_type = $_POST['documentType'] ?? '';
+    $receivers     = $_POST['receivers']    ?? [];
 
     if (empty($document_type)) {
         $error = 'Please select a document type.';
     } elseif (empty($_FILES['fileUpload']['name'][0])) {
         $error = 'Please upload at least one document.';
+    } elseif (empty($receivers)) {
+        $error = 'Please select at least one receiver.';
     } else {
         // Process uploaded files here
         // move_uploaded_file($_FILES['fileUpload']['tmp_name'][0], 'uploads/' . basename($_FILES['fileUpload']['name'][0]));
@@ -28,47 +31,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Function to get initials from email
 function getInitialsFromEmail($email) {
-    // If email is empty, return default
-    if (empty($email)) {
-        return 'U';
-    }
-    
-    // Split email by @ and take the first part
+    if (empty($email)) return 'U';
     $namePart = explode('@', $email)[0];
-    
-    // Split by dots, underscores, or hyphens
-    $parts = preg_split('/[._-]/', $namePart);
-    
+    $parts    = preg_split('/[._-]/', $namePart);
     $initials = '';
-    
-    // Take first letter of each part (up to 2 letters)
     foreach ($parts as $part) {
-        if (!empty($part)) {
-            $initials .= strtoupper(substr($part, 0, 1));
-        }
-        // Limit to 2 initials
-        if (strlen($initials) >= 2) {
-            break;
-        }
+        if (!empty($part)) $initials .= strtoupper(substr($part, 0, 1));
+        if (strlen($initials) >= 2) break;
     }
-    
-    // If we still don't have initials, use first letter of email
-    if (empty($initials) && !empty($email)) {
-        $initials = strtoupper(substr($email, 0, 1));
-    }
-    
-    return $initials ?: 'U'; // Default to 'U' if all else fails
+    if (empty($initials) && !empty($email)) $initials = strtoupper(substr($email, 0, 1));
+    return $initials ?: 'U';
 }
 
-// Get user email from session
-$user_email = $_SESSION['user_email'] ?? '';
-$user_initials = getInitialsFromEmail($user_email);
-
-// Get user role from session (or default to 'User')
-$user_role = $_SESSION['user_role'] ?? 'user';
+$user_email        = $_SESSION['user_email'] ?? '';
+$user_initials     = getInitialsFromEmail($user_email);
+$user_role         = $_SESSION['user_role']  ?? 'user';
 $user_role_display = ucfirst($user_role);
-?>
 
+// ---------------------------------------------------------------------------
+// Sample receiver data — replace this with a real DB query
+// ---------------------------------------------------------------------------
+$all_receivers = [
+    ['id' => 'mark_cruz', 'name' => 'MARK CRUZ', 'dept' => 'BSIT', 'role' => 'FACULTY', 'color' => 'bg-indigo-500'],
+];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -99,23 +84,25 @@ $user_role_display = ucfirst($user_role);
                             300: '#FF8083',
                             200: '#FF999D',
                             100: '#FFB3B6',
-                            50: '#FFCCCE',
+                            50:  '#FFCCCE',
                         }
                     },
                     fontFamily: {
-                        'main': ['"Noto Nastaliq Urdu"', 'serif'],
-                        'secondary': ['"IBM Plex Sans"', 'sans-serif'],
+                        'main':      ['"Noto Nastaliq Urdu"', 'serif'],
+                        'secondary': ['"IBM Plex Sans"',      'sans-serif'],
                     }
                 }
             }
         }
     </script>
     <style>
-        body {
-            font-family: 'IBM Plex Sans', sans-serif;
-        }
-        h1, h2, h3, h4, h5, h6 {
-            font-family: 'Noto Nastaliq Urdu', serif;
+        body { font-family: 'IBM Plex Sans', sans-serif; }
+        h1, h2, h3, h4, h5, h6 { font-family: 'Noto Nastaliq Urdu', serif; }
+
+        /* Highlight receiver row when its checkbox is checked */
+        .receiver-row:has(input[type="checkbox"]:checked) {
+            border-color: #D91619;
+            background-color: #FFCCCE;
         }
     </style>
 </head>
@@ -127,7 +114,7 @@ $user_role_display = ucfirst($user_role);
     <main class="lg:ml-64 min-h-screen">
 
         <!-- Top Bar -->
-        <header class="bg-white shadow-sm fixed top-0 right-0 left-0 lg:left-64 z-20">
+        <header class="bg-white shadow-sm sticky top-0 z-20">
             <div class="px-4 sm:px-6 lg:px-8 py-4">
                 <div class="flex items-center justify-between">
                     <div class="ml-12 lg:ml-0">
@@ -143,25 +130,25 @@ $user_role_display = ucfirst($user_role);
                             </svg>
                             <span class="absolute top-1 right-1 w-2 h-2 bg-crimson-600 rounded-full"></span>
                         </button>
-                        
-                            <div class="flex items-center space-x-3">
-                                <div class="hidden sm:block text-right">
-                                     <p class="text-sm font-semibold text-gray-800 font-secondary">
-                                       <?= htmlspecialchars($user_email ?: 'Guest User') ?>
-                                    </p>
-                                     <p class="text-xs text-gray-600 font-secondary"><?= htmlspecialchars($user_role_display) ?></p>
-                             </div>
-                             <div class="w-10 h-10 bg-crimson-700 rounded-full flex items-center justify-center">
-                                   <span class="text-white font-semibold font-secondary"><?= htmlspecialchars($user_initials) ?></span>
-                             </div>
-</div> 
+
+                        <div class="flex items-center space-x-3">
+                            <div class="hidden sm:block text-right">
+                                <p class="text-sm font-semibold text-gray-800 font-secondary">
+                                    <?= htmlspecialchars($user_email ?: 'Guest User') ?>
+                                </p>
+                                <p class="text-xs text-gray-600 font-secondary"><?= htmlspecialchars($user_role_display) ?></p>
+                            </div>
+                            <div class="w-10 h-10 bg-crimson-700 rounded-full flex items-center justify-center">
+                                <span class="text-white font-semibold font-secondary"><?= htmlspecialchars($user_initials) ?></span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
         </header>
 
         <!-- Page Content -->
-        <div class="px-4 sm:px-6 lg:px-8 py-8 pt-24">
+        <div class="px-4 sm:px-6 lg:px-8 py-8">
 
             <div class="grid grid-cols-1">
 
@@ -189,7 +176,7 @@ $user_role_display = ucfirst($user_role);
 
                         <form id="receiveForm" method="POST" action="" enctype="multipart/form-data" class="space-y-6">
 
-                            <!-- Document Type -->
+                            <!-- ── Document Type ──────────────────────────────────────── -->
                             <div>
                                 <label for="documentType" class="block text-sm font-semibold text-gray-700 mb-2 font-secondary">
                                     Document Type <span class="text-crimson-600">*</span>
@@ -201,21 +188,21 @@ $user_role_display = ucfirst($user_role);
                                     class="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition duration-200 font-secondary"
                                 >
                                     <option value="">Select document type...</option>
-                                    <option value="form"       <?= ($_POST['documentType'] ?? '') === 'form'       ? 'selected' : '' ?>>Form</option>
-                                    <option value="transcript" <?= ($_POST['documentType'] ?? '') === 'transcript' ? 'selected' : '' ?>>Transcript</option>
-                                    <option value="certificate"<?= ($_POST['documentType'] ?? '') === 'certificate'? 'selected' : '' ?>>Certificate</option>
-                                    <option value="diploma"    <?= ($_POST['documentType'] ?? '') === 'diploma'    ? 'selected' : '' ?>>Diploma</option>
-                                    <option value="clearance"  <?= ($_POST['documentType'] ?? '') === 'clearance'  ? 'selected' : '' ?>>Clearance</option>
-                                    <option value="other"      <?= ($_POST['documentType'] ?? '') === 'other'      ? 'selected' : '' ?>>Other</option>
+                                    <option value="form"        <?= ($_POST['documentType'] ?? '') === 'form'        ? 'selected' : '' ?>>Form</option>
+                                    <option value="transcript"  <?= ($_POST['documentType'] ?? '') === 'transcript'  ? 'selected' : '' ?>>Transcript</option>
+                                    <option value="certificate" <?= ($_POST['documentType'] ?? '') === 'certificate' ? 'selected' : '' ?>>Certificate</option>
+                                    <option value="diploma"     <?= ($_POST['documentType'] ?? '') === 'diploma'     ? 'selected' : '' ?>>Diploma</option>
+                                    <option value="clearance"   <?= ($_POST['documentType'] ?? '') === 'clearance'   ? 'selected' : '' ?>>Clearance</option>
+                                    <option value="other"       <?= ($_POST['documentType'] ?? '') === 'other'       ? 'selected' : '' ?>>Other</option>
                                 </select>
                             </div>
 
-                            <!-- File Upload -->
+                            <!-- ── File Upload ────────────────────────────────────────── -->
                             <div>
                                 <label for="fileUpload" class="block text-sm font-semibold text-gray-700 mb-2 font-secondary">
                                     Upload Document <span class="text-crimson-600">*</span>
                                 </label>
-                                <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-crimson-700 transition duration-200">
+                                <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-crimson-700 transition duration-200" id="dropZone">
                                     <input
                                         type="file"
                                         id="fileUpload"
@@ -237,20 +224,142 @@ $user_role_display = ucfirst($user_role);
                                 <div id="fileList" class="mt-3 space-y-2"></div>
                             </div>
 
-                            <!-- Buttons -->
+                            <!-- ── Receiver Selection ─────────────────────────────────── -->
+                            <div class="border border-gray-200 rounded-lg p-4">
+
+                                <p class="text-sm font-semibold text-gray-500 mb-4 font-secondary">Receiver Selection</p>
+
+                                <!-- Search + Filters -->
+                                <div class="flex flex-col sm:flex-row gap-3 mb-4">
+
+                                    <!-- Search Name -->
+                                    <div class="flex-1 flex items-center gap-2">
+                                        <div class="relative flex-1">
+                                            <label for="receiverSearch" class="block text-xs font-semibold text-gray-600 mb-1 font-secondary">Search Name</label>
+                                            <input
+                                                type="text"
+                                                id="receiverSearch"
+                                                placeholder="Name / Id number"
+                                                class="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition duration-200 font-secondary text-sm"
+                                            >
+                                        </div>
+                                        <!-- Filter icon button -->
+                                        <button type="button" class="mt-5 p-3 text-gray-400 hover:text-crimson-700 transition duration-200" title="Filter">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M7 12h10M10 18h4"/>
+                                            </svg>
+                                        </button>
+                                    </div>
+
+                                    <!-- Filter by Role -->
+                                    <div class="sm:w-44">
+                                        <label for="filterRole" class="block text-xs font-semibold text-gray-600 mb-1 font-secondary">Filter by Role</label>
+                                        <select
+                                            id="filterRole"
+                                            class="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition duration-200 font-secondary text-sm text-gray-500"
+                                        >
+                                            <option value="">Choose a role</option>
+                                            <option value="FACULTY">Faculty</option>
+                                            <option value="STAFF">Staff</option>
+                                            <option value="STUDENT">Student</option>
+                                            <option value="ADMIN">Admin</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- Filter by Department -->
+                                    <div class="sm:w-52">
+                                        <label for="filterDepartment" class="block text-xs font-semibold text-gray-600 mb-1 font-secondary">Filter by Department</label>
+                                        <select
+                                            id="filterDepartment"
+                                            class="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition duration-200 font-secondary text-sm text-gray-500"
+                                        >
+                                            <option value="">Choose department</option>
+                                            <option value="CA">College of Agriculture</option>
+                                            <option value="CA">College of Architecture</option>
+                                            <option value="CAIS">College of Asian & Islamic Studies</option>
+                                            <option value="CCS">College of Computing Studies</option>
+                                            <option value="CCJE">College of Criminal Justice Education</option>
+                                            <option value="COE">College of Engineering</option>
+                                            <option value="CFES">College of Forestry & Environmental Studies</option>
+                                            <option value="CHE">College of Home Economics</option>
+                                            <option value="COL">College of Law</option>
+                                            <option value="CLA">College of Liberal Arts</option>
+                                            <option value="CM">College of Medicine</option>
+                                            <option value="CN">College of Nursing</option>
+                                            <option value="CPADS">College of Public Administration & Development Studies</option>
+                                            <option value="CSM">College of Science and Mathematics</option>
+                                            <option value="CSWCD">College of Social Work & Community Development</option>
+                                            <option value="CSSPE">College of Sports Science & Physical Education</option>
+                                            <option value="CTE">College of Teacher Education</option>
+                                            <option value="PSMP">Professional Science Master's Program</option>
+                                        </select>
+                                    </div>
+
+                                </div><!-- /Search + Filters -->
+
+                                <!-- Receiver List -->
+                                <div id="receiverList" class="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                    <?php foreach ($all_receivers as $r): ?>
+                                    <?php $initials = implode('', array_map(fn($w) => strtoupper($w[0]), explode(' ', $r['name']))); ?>
+                                    <label
+                                        class="receiver-row flex items-center justify-between bg-white border-2 border-gray-200 rounded-lg px-4 py-3 cursor-pointer hover:border-crimson-400 hover:bg-crimson-50 transition duration-200"
+                                        data-name="<?= htmlspecialchars($r['name']) ?>"
+                                        data-dept="<?= htmlspecialchars($r['dept']) ?>"
+                                        data-role="<?= htmlspecialchars($r['role']) ?>"
+                                    >
+                                        <div class="flex items-center gap-3">
+                                            <input
+                                                type="checkbox"
+                                                name="receivers[]"
+                                                value="<?= htmlspecialchars($r['id']) ?>"
+                                                class="w-4 h-4 text-crimson-700 border-gray-300 rounded focus:ring-crimson-500"
+                                            >
+                                            <div class="w-9 h-9 <?= $r['color'] ?> rounded-full flex items-center justify-center shrink-0">
+                                                <span class="text-white text-sm font-bold font-secondary"><?= htmlspecialchars(substr($initials, 0, 1)) ?></span>
+                                            </div>
+                                            <span class="text-sm font-bold text-gray-800 font-secondary tracking-wide">
+                                                <?= htmlspecialchars($r['name']) ?>
+                                            </span>
+                                        </div>
+                                        <div class="flex items-center gap-3 text-sm font-semibold text-gray-500 font-secondary">
+                                            <span><?= htmlspecialchars($r['dept']) ?></span>
+                                            <span><?= htmlspecialchars($r['role']) ?></span>
+                                        </div>
+                                    </label>
+                                    <?php endforeach; ?>
+                                </div>
+
+                                <!-- No results -->
+                                <p id="noResults" class="hidden text-sm text-gray-400 text-center py-4 font-secondary">
+                                    No receivers found matching your search.
+                                </p>
+
+                                <!-- Selected count badge -->
+                                <div id="selectedCount" class="mt-3 hidden">
+                                    <span class="inline-flex items-center gap-1 px-3 py-1 bg-crimson-100 text-crimson-700 rounded-full text-xs font-semibold font-secondary">
+                                        <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414 0L8 12.586 4.707 9.293a1 1 0 00-1.414 1.414l4 4a1 1 0 001.414 0l8-8a1 1 0 000-1.414z" clip-rule="evenodd"/>
+                                        </svg>
+                                        <span id="selectedCountText">0 receiver(s) selected</span>
+                                    </span>
+                                </div>
+
+                            </div><!-- /Receiver Selection -->
+
+                            <!-- ── Buttons ─────────────────────────────────────────────── -->
                             <div class="flex flex-col sm:flex-row gap-3">
-                                <button
-                                    type="submit"
-                                    class="flex-1 bg-crimson-700 text-white font-bold py-3 px-6 rounded-lg hover:bg-crimson-800 focus:outline-none focus:ring-4 focus:ring-crimson-300 transition duration-200 transform hover:scale-[1.02] active:scale-[0.98] font-secondary"
-                                >
-                                    Submit Document
-                                </button>
                                 <button
                                     type="button"
                                     id="saveAsDraft"
                                     class="flex-1 bg-gray-200 text-gray-700 font-bold py-3 px-6 rounded-lg hover:bg-gray-300 focus:outline-none focus:ring-4 focus:ring-gray-300 transition duration-200 font-secondary"
                                 >
                                     Save as Draft
+                                </button>
+                                <button
+                                    type="submit"
+                                    class="flex-1 bg-crimson-700 text-white font-bold py-3 px-6 rounded-lg hover:bg-crimson-800 focus:outline-none focus:ring-4 focus:ring-crimson-300 transition duration-200 transform hover:scale-[1.02] active:scale-[0.98] font-secondar"
+                                >
+                                    Submit Document
                                 </button>
                             </div>
 
@@ -264,15 +373,29 @@ $user_role_display = ucfirst($user_role);
     </main>
 
     <script>
-
-        // File upload handling
-        const fileUpload = document.getElementById('fileUpload');
-        const fileList   = document.getElementById('fileList');
-        let uploadedFiles = [];
+        // ── File upload handling ───────────────────────────────────────────────
+        const fileUpload   = document.getElementById('fileUpload');
+        const fileList     = document.getElementById('fileList');
+        const dropZone     = document.getElementById('dropZone');
+        let uploadedFiles  = [];
 
         fileUpload.addEventListener('change', (e) => {
-            const files = Array.from(e.target.files);
-            uploadedFiles = [...uploadedFiles, ...files];
+            uploadedFiles = [...uploadedFiles, ...Array.from(e.target.files)];
+            displayFiles();
+        });
+
+        // Drag-and-drop support
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('border-crimson-700', 'bg-crimson-50');
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('border-crimson-700', 'bg-crimson-50');
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-crimson-700', 'bg-crimson-50');
+            uploadedFiles = [...uploadedFiles, ...Array.from(e.dataTransfer.files)];
             displayFiles();
         });
 
@@ -306,7 +429,59 @@ $user_role_display = ucfirst($user_role);
             displayFiles();
         }
 
-        // Save as draft
+        // ── Receiver search / filter ──────────────────────────────────────────
+        const receiverSearch    = document.getElementById('receiverSearch');
+        const filterRole        = document.getElementById('filterRole');
+        const filterDepartment  = document.getElementById('filterDepartment');
+        const receiverList      = document.getElementById('receiverList');
+        const noResults         = document.getElementById('noResults');
+        const selectedCount     = document.getElementById('selectedCount');
+        const selectedCountText = document.getElementById('selectedCountText');
+
+        function filterReceivers() {
+            const query = receiverSearch.value.toLowerCase().trim();
+            const role  = filterRole.value.toLowerCase();
+            const dept  = filterDepartment.value.toLowerCase();
+
+            const rows  = receiverList.querySelectorAll('label.receiver-row');
+            let visible = 0;
+
+            rows.forEach(row => {
+                const name     = (row.dataset.name || '').toLowerCase();
+                const rowDept  = (row.dataset.dept || '').toLowerCase();
+                const rowRole  = (row.dataset.role || '').toLowerCase();
+
+                const matchName = !query || name.includes(query);
+                const matchRole = !role  || rowRole === role;
+                const matchDept = !dept  || rowDept === dept;
+
+                if (matchName && matchRole && matchDept) {
+                    row.classList.remove('hidden');
+                    visible++;
+                } else {
+                    row.classList.add('hidden');
+                }
+            });
+
+            noResults.classList.toggle('hidden', visible > 0);
+        }
+
+        function updateSelectedCount() {
+            const checked = receiverList.querySelectorAll('input[type="checkbox"]:checked').length;
+            if (checked > 0) {
+                selectedCount.classList.remove('hidden');
+                selectedCountText.textContent = checked + ' receiver' + (checked > 1 ? 's' : '') + ' selected';
+            } else {
+                selectedCount.classList.add('hidden');
+            }
+        }
+
+        receiverSearch.addEventListener('input',   filterReceivers);
+        filterRole.addEventListener('change',      filterReceivers);
+        filterDepartment.addEventListener('change', filterReceivers);
+        receiverList.addEventListener('change',    updateSelectedCount);
+
+        // ── Save as draft ─────────────────────────────────────────────────────
         document.getElementById('saveAsDraft').addEventListener('click', () => {
             alert('Document saved as draft! You can continue editing it later.');
         });
