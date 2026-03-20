@@ -108,7 +108,7 @@ $all_receivers = [
 </head>
 <body class="bg-gray-100">
 
-    <?php include 'sidebar/sidebar.php'; ?>
+    <?php include __DIR__ . '/sidebar/sidebar.php'; ?>
 
     <!-- Main Content -->
     <main class="lg:ml-64 min-h-screen">

@@ -1,7 +1,4 @@
 <?php
-session_start();
-require_once '../auth-guard/Auth.php';
-
 // SAMPLE DATA (Replace with database later)
 $users = [
     ["name" => "Juan dela Cruz", "email" => "admin@wmsu.edu.ph", "role" => "Admin", "status" => "Active", "date" => "Jan 10, 2024"],
@@ -24,7 +21,7 @@ $users = [
 
 <div class="flex">
 
-    <?php include '../sidebar/sidebar.php'; ?>
+    <?php include __DIR__ . '/../sidebar/sidebar.php'; ?>
 
     <!-- MAIN CONTENT -->
     <main class="flex-1 ml-64 p-6">

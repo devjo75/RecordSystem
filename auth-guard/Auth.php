@@ -29,7 +29,7 @@ if (isset($_SESSION['last_activity'])) {
         session_destroy();
         session_start();
         $_SESSION['session_expired'] = true;
-        header('Location: ../login.php?reason=expired');
+        header('Location: login.php?reason=expired');
         exit;
     }
 }
