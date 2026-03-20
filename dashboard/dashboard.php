@@ -1,4 +1,6 @@
 <?php
+session_start();
+require_once '../auth-guard/Auth.php';
 // SAMPLE DATA (Replace with database later)
 $users = [
     ["name" => "Juan dela Cruz", "email" => "admin@wmsu.edu.ph", "role" => "Admin", "status" => "Active", "date" => "Jan 10, 2024"],
