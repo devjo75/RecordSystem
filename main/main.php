@@ -2,6 +2,7 @@
 session_start();
 
 require_once '../auth-guard/Auth.php';
+
 // Uncomment to protect this page:
 // if (!isset($_SESSION['logged_in']) || !$_SESSION['logged_in']) {
 //     header('Location: login.php');
@@ -11,7 +12,7 @@ require_once '../auth-guard/Auth.php';
 $success = '';
 $error   = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['_memo_submit'])) {
     $document_type = $_POST['documentType'] ?? '';
     $receivers     = $_POST['receivers']    ?? [];
 
@@ -48,7 +49,7 @@ $user_role         = $_SESSION['user_role']  ?? 'user';
 $user_role_display = ucfirst($user_role);
 
 // ---------------------------------------------------------------------------
-// Sample receiver data — replace this with a real DB query
+// Sample receiver data — replace with a real DB query
 // ---------------------------------------------------------------------------
 $all_receivers = [
     ['id' => 'mark_cruz', 'name' => 'MARK CRUZ', 'dept' => 'BSIT', 'role' => 'FACULTY', 'color' => 'bg-indigo-500'],
@@ -184,15 +185,14 @@ $all_receivers = [
                                     id="documentType"
                                     name="documentType"
                                     required
+                                    onchange="handleDocumentTypeChange(this.value)"
                                     class="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition duration-200 font-secondary"
                                 >
                                     <option value="">Select document type...</option>
-                                    <option value="form"        <?= ($_POST['documentType'] ?? '') === 'form'        ? 'selected' : '' ?>>Form</option>
-                                    <option value="transcript"  <?= ($_POST['documentType'] ?? '') === 'transcript'  ? 'selected' : '' ?>>Transcript</option>
-                                    <option value="certificate" <?= ($_POST['documentType'] ?? '') === 'certificate' ? 'selected' : '' ?>>Certificate</option>
-                                    <option value="diploma"     <?= ($_POST['documentType'] ?? '') === 'diploma'     ? 'selected' : '' ?>>Diploma</option>
-                                    <option value="clearance"   <?= ($_POST['documentType'] ?? '') === 'clearance'   ? 'selected' : '' ?>>Clearance</option>
-                                    <option value="other"       <?= ($_POST['documentType'] ?? '') === 'other'       ? 'selected' : '' ?>>Other</option>
+                                    <option value="memorandum"   <?= ($_POST['documentType'] ?? '') === 'memorandum'   ? 'selected' : '' ?>>Memorandum Order</option>
+                                    <option value="special_order" <?= ($_POST['documentType'] ?? '') === 'special_order' ? 'selected' : '' ?>>Special Order</option>
+                                    <option value="travel_order"  <?= ($_POST['documentType'] ?? '') === 'travel_order'  ? 'selected' : '' ?>>Travel Order</option>
+                                    <option value="other"        <?= ($_POST['documentType'] ?? '') === 'other'        ? 'selected' : '' ?>>Other</option>
                                 </select>
                             </div>
 
@@ -275,20 +275,20 @@ $all_receivers = [
                                             <option value="">Choose department</option>
                                             <option value="CA">College of Agriculture</option>
                                             <option value="CA">College of Architecture</option>
-                                            <option value="CAIS">College of Asian & Islamic Studies</option>
+                                            <option value="CAIS">College of Asian &amp; Islamic Studies</option>
                                             <option value="CCS">College of Computing Studies</option>
                                             <option value="CCJE">College of Criminal Justice Education</option>
                                             <option value="COE">College of Engineering</option>
-                                            <option value="CFES">College of Forestry & Environmental Studies</option>
+                                            <option value="CFES">College of Forestry &amp; Environmental Studies</option>
                                             <option value="CHE">College of Home Economics</option>
                                             <option value="COL">College of Law</option>
                                             <option value="CLA">College of Liberal Arts</option>
                                             <option value="CM">College of Medicine</option>
                                             <option value="CN">College of Nursing</option>
-                                            <option value="CPADS">College of Public Administration & Development Studies</option>
+                                            <option value="CPADS">College of Public Administration &amp; Development Studies</option>
                                             <option value="CSM">College of Science and Mathematics</option>
-                                            <option value="CSWCD">College of Social Work & Community Development</option>
-                                            <option value="CSSPE">College of Sports Science & Physical Education</option>
+                                            <option value="CSWCD">College of Social Work &amp; Community Development</option>
+                                            <option value="CSSPE">College of Sports Science &amp; Physical Education</option>
                                             <option value="CTE">College of Teacher Education</option>
                                             <option value="PSMP">Professional Science Master's Program</option>
                                         </select>
@@ -356,7 +356,7 @@ $all_receivers = [
                                 </button>
                                 <button
                                     type="submit"
-                                    class="flex-1 bg-crimson-700 text-white font-bold py-3 px-6 rounded-lg hover:bg-crimson-800 focus:outline-none focus:ring-4 focus:ring-crimson-300 transition duration-200 transform hover:scale-[1.02] active:scale-[0.98] font-secondar"
+                                    class="flex-1 bg-crimson-700 text-white font-bold py-3 px-6 rounded-lg hover:bg-crimson-800 focus:outline-none focus:ring-4 focus:ring-crimson-300 transition duration-200 transform hover:scale-[1.02] active:scale-[0.98] font-secondary"
                                 >
                                     Submit Document
                                 </button>
@@ -371,19 +371,38 @@ $all_receivers = [
         </div>
     </main>
 
+    <!-- ══════════════════════════════════════════════════════════
+         INCLUDE MEMO FORM PANEL (corrected paths)
+    ══════════════════════════════════════════════════════════ -->
+    <?php include __DIR__ . '/../document_type/memo.php'; ?>
+    <?php include __DIR__ . '/../document_type/special_order.php'; ?>
+    <?php include __DIR__ . '/../document_type/travel_order.php'; ?>
+
     <script>
-        // ── File upload handling ───────────────────────────────────────────────
-        const fileUpload   = document.getElementById('fileUpload');
-        const fileList     = document.getElementById('fileList');
-        const dropZone     = document.getElementById('dropZone');
-        let uploadedFiles  = [];
+        // ── Document Type → open matching form ───────────────────────────────
+        function handleDocumentTypeChange(value) {
+            if (value === 'memorandum') {
+                openMemoForm(); // defined in document_type/memo.php
+            } 
+            else if (value === 'special_order') {
+                openSpecialOrderForm();
+            }
+            else if (value === 'travel_order') {
+                openTravelOrderForm();
+            }
+        }
+
+        // ── File upload handling ──────────────────────────────────────────────
+        const fileUpload  = document.getElementById('fileUpload');
+        const fileList    = document.getElementById('fileList');
+        const dropZone    = document.getElementById('dropZone');
+        let uploadedFiles = [];
 
         fileUpload.addEventListener('change', (e) => {
             uploadedFiles = [...uploadedFiles, ...Array.from(e.target.files)];
             displayFiles();
         });
 
-        // Drag-and-drop support
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
             dropZone.classList.add('border-crimson-700', 'bg-crimson-50');
@@ -441,14 +460,13 @@ $all_receivers = [
             const query = receiverSearch.value.toLowerCase().trim();
             const role  = filterRole.value.toLowerCase();
             const dept  = filterDepartment.value.toLowerCase();
-
             const rows  = receiverList.querySelectorAll('label.receiver-row');
             let visible = 0;
 
             rows.forEach(row => {
-                const name     = (row.dataset.name || '').toLowerCase();
-                const rowDept  = (row.dataset.dept || '').toLowerCase();
-                const rowRole  = (row.dataset.role || '').toLowerCase();
+                const name    = (row.dataset.name || '').toLowerCase();
+                const rowDept = (row.dataset.dept || '').toLowerCase();
+                const rowRole = (row.dataset.role || '').toLowerCase();
 
                 const matchName = !query || name.includes(query);
                 const matchRole = !role  || rowRole === role;
@@ -475,10 +493,10 @@ $all_receivers = [
             }
         }
 
-        receiverSearch.addEventListener('input',   filterReceivers);
-        filterRole.addEventListener('change',      filterReceivers);
+        receiverSearch.addEventListener('input',    filterReceivers);
+        filterRole.addEventListener('change',       filterReceivers);
         filterDepartment.addEventListener('change', filterReceivers);
-        receiverList.addEventListener('change',    updateSelectedCount);
+        receiverList.addEventListener('change',     updateSelectedCount);
 
         // ── Save as draft ─────────────────────────────────────────────────────
         document.getElementById('saveAsDraft').addEventListener('click', () => {

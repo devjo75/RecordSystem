@@ -1,5 +1,4 @@
 <?php
-session_start();
 require_once '../auth-guard/Auth.php';
 // SAMPLE DATA (Replace with database later)
 $users = [
