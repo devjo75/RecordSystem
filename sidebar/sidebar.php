@@ -4,7 +4,7 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 // BASE PATH (IMPORTANT)
-$base = '/RecordSystem/';
+$base = '/WMSU-Receive-System/';
 
 // Detect current page + folder
 $current_page = basename($_SERVER['PHP_SELF']);
