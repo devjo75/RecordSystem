@@ -120,6 +120,11 @@ function inboxNavLink($href, $matchPage) {
 
         </ul>
 
+    
+    </nav>
+    
+ 
+
         <hr class="my-6 border-red-700">
 
         <!-- USER INFO -->
@@ -137,14 +142,6 @@ function inboxNavLink($href, $matchPage) {
         <a href="<?= $base ?>logout.php" class="flex items-center px-4 py-3 rounded-lg hover:bg-red-800 transition-colors">
             <span class="mr-3"><i class="fa-solid fa-right-from-bracket"></i></span> Logout
         </a>
-    </nav>
-
-    <!-- BOTTOM BUTTON -->
-    <div class="px-4 py-6 flex justify-center">
-        <button class="bg-red-700 w-12 h-12 rounded-full flex items-center justify-center shadow-lg hover:bg-red-600 transition-colors">
-            <i class="fa-solid fa-envelope text-white"></i>
-        </button>
-    </div>
 </aside>
 
 <!-- FONT AWESOME -->

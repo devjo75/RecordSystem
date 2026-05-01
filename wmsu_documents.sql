@@ -3,9 +3,9 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Apr 30, 2026 at 06:07 PM
+-- Generation Time: May 01, 2026 at 08:16 AM
 -- Server version: 10.4.32-MariaDB
--- PHP Version: 8.2.12
+-- PHP Version: 8.0.30
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -109,10 +109,10 @@ CREATE TABLE `document_history` (
 --
 
 INSERT INTO `document_history` (`id`, `document_type`, `document_id`, `document_number`, `action`, `action_by`, `action_details`, `created_at`) VALUES
-(8, 'Memorandum Order', 5, 'MO-2026-001', 'Released', 5, 'Document released to recipients', '2026-04-30 15:43:21'),
-(9, 'Special Order', 2, 'S0-001', 'Released', 5, 'Document released to recipients', '2026-04-30 15:56:57'),
-(10, 'Special Order', 2, 'S0-001', 'Received', 5, 'Document received by sl201101795@wmsu.edu.ph with feedback: alright', '2026-04-30 15:57:19'),
-(12, 'Travel Order', 2, 'IO-2026-001', 'Released', 5, 'Document released to recipients', '2026-04-30 16:05:18');
+(8, 'Memorandum Order', 5, 'MO-2026-001', 'Released', NULL, 'Document released to recipients', '2026-04-30 15:43:21'),
+(9, 'Special Order', 2, 'S0-001', 'Released', NULL, 'Document released to recipients', '2026-04-30 15:56:57'),
+(10, 'Special Order', 2, 'S0-001', 'Received', NULL, 'Document received by sl201101795@wmsu.edu.ph with feedback: alright', '2026-04-30 15:57:19'),
+(12, 'Travel Order', 2, 'IO-2026-001', 'Released', NULL, 'Document released to recipients', '2026-04-30 16:05:18');
 
 -- --------------------------------------------------------
 
@@ -196,14 +196,6 @@ CREATE TABLE `notifications` (
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
---
--- Dumping data for table `notifications`
---
-
-INSERT INTO `notifications` (`id`, `user_id`, `notification_type`, `title`, `message`, `document_type`, `document_id`, `is_read`, `read_at`, `created_at`) VALUES
-(8, 5, 'Document Released', 'Document Released: Special Order', 'Document S0-001 has been released to you by sl201101795@wmsu.edu.ph', 'Special Order', 2, 0, NULL, '2026-04-30 15:57:03'),
-(10, 5, 'Document Released', 'Document Released: Travel Order', 'Document IO-2026-001 has been released to you by sl201101795@wmsu.edu.ph', 'Travel Order', 2, 0, NULL, '2026-04-30 16:05:24');
-
 -- --------------------------------------------------------
 
 --
@@ -229,7 +221,9 @@ INSERT INTO `receivers` (`id`, `name`, `department`, `role`, `email`, `created_a
 (3, 'JOSE SANTOS', 'CCS', 'FACULTY', NULL, '2026-03-23 11:39:34'),
 (4, 'MARIA DELA CRUZ', 'CTE', 'ADMIN', NULL, '2026-03-23 11:39:34'),
 (5, 'PEDRO GARCIA', 'COL', 'STUDENT', NULL, '2026-03-23 11:39:34'),
-(6, 'Jason A. Catadman', 'IT DEPARTMENT', 'FACULTY', 'jasonacatadman@wmsu.edu.ph', '2026-03-23 11:44:46');
+(6, 'Jason A. Catadman', 'IT DEPARTMENT', 'FACULTY', 'jasonacatadman@wmsu.edu.ph', '2026-03-23 11:44:46'),
+(9, 'Jolouis Sardani', 'N/A', 'ADMIN', 'eh202204534@wmsu.edu.ph', '2026-05-01 06:07:50'),
+(10, 'admin', 'N/A', 'ADMIN', 'admin@wmsu.edu.ph', '2026-05-01 06:09:10');
 
 -- --------------------------------------------------------
 
@@ -302,7 +296,7 @@ CREATE TABLE `special_orders` (
 --
 
 INSERT INTO `special_orders` (`id`, `so_number`, `document_year`, `document_month`, `concerned_faculty`, `subject`, `date_issued`, `effectivity`, `effectivity_date`, `source_signatory`, `remarks`, `document_file`, `sender_email`, `status`, `created_at`, `updated_at`, `created_by`) VALUES
-(2, 'S0-001', 2026, 'April', 'John Mchales Backbone', 'this is how you do it', '2026-04-30', 'Effective Immediately', NULL, 'unsa mani oi', 'wews', 'uploads/documents/cf13241c288c2fe1bbeeaa311248f31c.jpg', 'sl201101795@wmsu.edu.ph', 'Released', '2026-04-30 15:56:57', '2026-04-30 15:56:57', 5);
+(2, 'S0-001', 2026, 'April', 'John Mchales Backbone', 'this is how you do it', '2026-04-30', 'Effective Immediately', NULL, 'unsa mani oi', 'wews', 'uploads/documents/cf13241c288c2fe1bbeeaa311248f31c.jpg', 'sl201101795@wmsu.edu.ph', 'Released', '2026-04-30 15:56:57', '2026-04-30 15:56:57', NULL);
 
 -- --------------------------------------------------------
 
@@ -367,7 +361,7 @@ CREATE TABLE `travel_orders` (
 --
 
 INSERT INTO `travel_orders` (`id`, `io_number`, `document_year`, `document_month`, `employee_name`, `office`, `subject`, `date_issued`, `duration_and_destination`, `travel_start_date`, `travel_end_date`, `destination`, `fund_assistance`, `source`, `no_partly`, `remarks`, `document_file`, `sender_email`, `status`, `created_at`, `updated_at`, `created_by`) VALUES
-(2, 'IO-2026-001', 2026, 'April', 'Aaron Flores', 'IT Department', 'Bisaya', '2026-04-30', NULL, '2026-05-04', '2026-05-08', 'Pagadian', 0.00, 'unsa mani oi ', NULL, 'Sardani Muslim', 'uploads/documents/0004a15954ae9a0f41a7436148bcaa57.jpg', 'sl201101795@wmsu.edu.ph', 'Released', '2026-04-30 16:05:18', '2026-04-30 16:05:18', 5);
+(2, 'IO-2026-001', 2026, 'April', 'Aaron Flores', 'IT Department', 'Bisaya', '2026-04-30', NULL, '2026-05-04', '2026-05-08', 'Pagadian', 0.00, 'unsa mani oi ', NULL, 'Sardani Muslim', 'uploads/documents/0004a15954ae9a0f41a7436148bcaa57.jpg', 'sl201101795@wmsu.edu.ph', 'Released', '2026-04-30 16:05:18', '2026-04-30 16:05:18', NULL);
 
 -- --------------------------------------------------------
 
@@ -395,8 +389,8 @@ CREATE TABLE `users` (
 --
 
 INSERT INTO `users` (`id`, `username`, `email`, `password_hash`, `full_name`, `role`, `department`, `position`, `is_active`, `created_at`, `updated_at`, `last_login`) VALUES
-(1, 'admin', 'admin@wmsu.edu.ph', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'System Administrator', 'Admin', 'IT Department', 'System Admin', 1, '2026-03-17 23:15:33', '2026-03-17 23:15:33', NULL),
-(5, 'sl201101795', 'sl201101795@wmsu.edu.ph', '$2y$10$8IumO1qwssuMY9AYfO6bNuLfoEmv6N4Cffsp5vEQmzHEUpgrkWqKO', 'Borat', 'Admin', 'College of Law', 'Dean', 1, '2026-04-30 13:22:00', '2026-04-30 14:50:06', '2026-04-30 22:42:57');
+(6, 'JO', 'eh202204534@wmsu.edu.ph', '$2y$10$mJEb0N3K2SGIRYmnMBFg8OUK8roG/lw9dMZwlrWKsrFqwre70yF/a', 'Jolouis Sardani', 'Admin', '', '', 1, '2026-05-01 06:07:50', '2026-05-01 06:08:26', '2026-05-01 14:08:26'),
+(7, 'admin@wmsu.edu.ph', 'admin@wmsu.edu.ph', '$2y$10$zWQa6KYdpazF2GemqSnWiuJo28YMaOobjk3HXRaO4RHQyiWVt5h0q', 'admin', 'Admin', '', '', 1, '2026-05-01 06:09:10', '2026-05-01 06:09:31', '2026-05-01 14:09:31');
 
 -- --------------------------------------------------------
 
@@ -609,7 +603,7 @@ ALTER TABLE `notifications`
 -- AUTO_INCREMENT for table `receivers`
 --
 ALTER TABLE `receivers`
-  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=9;
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
 
 --
 -- AUTO_INCREMENT for table `recipient_groups`
@@ -639,7 +633,7 @@ ALTER TABLE `travel_orders`
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
 -- Constraints for dumped tables
