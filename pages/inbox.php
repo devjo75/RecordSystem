@@ -161,8 +161,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $feedback = $_POST['feedback'] ?? '';
     
     try {
+        $pdo->beginTransaction();
+
+        $recipient_id_resolved = (int)$recipient_id; // may be 0 if token path
+
         if ($token) {
-            // Update using token — accept Pending OR Sent (email was delivered but not yet acknowledged)
+            // Update using token
             $stmt = $pdo->prepare("
                 UPDATE document_recipients 
                 SET status = 'Received', 
@@ -171,8 +175,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 WHERE confirmation_token = ? AND status IN ('Pending', 'Sent')
             ");
             $stmt->execute([$feedback, $token]);
+
+            // Resolve the actual recipient id from the token for history insert
+            if ($stmt->rowCount() > 0) {
+                $id_row = $pdo->prepare("SELECT id FROM document_recipients WHERE confirmation_token = ? LIMIT 1");
+                $id_row->execute([$token]);
+                $recipient_id_resolved = (int)($id_row->fetchColumn() ?: 0);
+            }
         } else {
-            // Update using ID — same: accept Pending OR Sent
+            // Update using ID
             $stmt = $pdo->prepare("
                 UPDATE document_recipients 
                 SET status = 'Received', 
@@ -184,28 +195,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
         
         if ($stmt->rowCount() > 0) {
-            // Add to document history
-            $pdo->prepare("
-                INSERT INTO document_history (document_type, document_id, document_number, action, action_by, action_details)
-                SELECT dr.document_type, dr.document_id, 
-                       CASE 
-                           WHEN dr.document_type = 'Memorandum Order' THEN m.mo_number
-                           WHEN dr.document_type = 'Special Order' THEN s.so_number
-                           WHEN dr.document_type = 'Travel Order' THEN t.io_number
-                       END,
-                       'Received', ?, CONCAT('Document received by ', ?, IF(? != '', CONCAT(' with feedback: ', ?), ''))
-                FROM document_recipients dr
-                LEFT JOIN memorandum_orders m ON dr.document_type = 'Memorandum Order' AND dr.document_id = m.id
-                LEFT JOIN special_orders s ON dr.document_type = 'Special Order' AND dr.document_id = s.id
-                LEFT JOIN travel_orders t ON dr.document_type = 'Travel Order' AND dr.document_id = t.id
-                WHERE dr.id = ?
-            ")->execute([$user_id, $user_full_name, $feedback, $feedback, $recipient_id]);
-            
+            // Add to document history — use resolved id so token path works too
+            if ($recipient_id_resolved > 0) {
+                $pdo->prepare("
+                    INSERT INTO document_history (document_type, document_id, document_number, action, action_by, action_details)
+                    SELECT dr.document_type, dr.document_id, 
+                           CASE 
+                               WHEN dr.document_type = 'Memorandum Order' THEN m.mo_number
+                               WHEN dr.document_type = 'Special Order' THEN s.so_number
+                               WHEN dr.document_type = 'Travel Order' THEN t.io_number
+                           END,
+                           'Received', ?, CONCAT('Document received by ', ?, IF(? != '', CONCAT(' with feedback: ', ?), ''))
+                    FROM document_recipients dr
+                    LEFT JOIN memorandum_orders m ON dr.document_type = 'Memorandum Order' AND dr.document_id = m.id
+                    LEFT JOIN special_orders s ON dr.document_type = 'Special Order' AND dr.document_id = s.id
+                    LEFT JOIN travel_orders t ON dr.document_type = 'Travel Order' AND dr.document_id = t.id
+                    WHERE dr.id = ?
+                ")->execute([$user_id, $user_full_name, $feedback, $feedback, $recipient_id_resolved]);
+            }
+
+            $pdo->commit();
             echo json_encode(['success' => true, 'message' => 'Document marked as received with acknowledgment']);
         } else {
+            $pdo->rollBack();
             echo json_encode(['success' => false, 'message' => 'Document already received or not found']);
         }
     } catch (PDOException $e) {
+        $pdo->rollBack();
         echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
     }
     exit;
@@ -315,6 +331,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         <select id="statusFilter" class="px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 font-secondary bg-white text-gray-700">
                             <option value="">All Status</option>
                             <option value="Pending">Pending</option>
+                            <option value="Sent">Sent (Unread)</option>
                             <option value="Received">Received</option>
                         </select>
 
@@ -383,7 +400,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                      onclick="viewDocument(this)">
                                     
                                     <div class="col-span-3 flex items-center gap-3">
-                                        <input type="checkbox" onclick="event.stopPropagation()" class="doc-checkbox w-4 h-4 text-crimson-700 border-gray-300 rounded focus:ring-crimson-500">
+                                        <input type="checkbox" 
+                                            class="doc-checkbox w-4 h-4 text-crimson-700 border-gray-300 rounded pointer-events-none"
+                                            <?= $doc['status'] === 'Received' ? 'checked' : '' ?>
+                                            tabindex="-1"
+                                            aria-label="Acknowledgment status">
                                         <div class="relative">
                                             <div class="w-10 h-10 rounded-full bg-crimson-500 text-white flex items-center justify-center font-bold font-secondary text-sm">
                                                 <?= htmlspecialchars(substr($initials, 0, 2)) ?>
@@ -543,37 +564,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 feedbackTextarea.classList.remove('bg-gray-100');
             }
             
-// Populate attached files
 const filesContainer = document.getElementById('modalFiles');
 const noFilesMsg = document.getElementById('noFilesMsg');
 filesContainer.innerHTML = '';
-
-console.log('Files data:', currentDocument.files); // Debug log
 
 if (currentDocument.files && currentDocument.files.length > 0) {
     noFilesMsg.classList.add('hidden');
     
     currentDocument.files.forEach(f => {
         const a = document.createElement('a');
-        
-        // Get the file path - it should already be correct from database
-        let filePath = f.path;
-        
-        // Debug log
-        console.log('Original file path:', filePath);
-        
-        // Make sure path doesn't have double slashes
-        if (filePath.startsWith('/')) {
-            filePath = filePath.substring(1);
-        }
-        
-        // Use relative path from the current directory
-        // Since inbox.php is likely in a subfolder, go up one level
-        a.href = '../' + filePath;
-        
-        // Alternative: Use absolute path from root (uncomment if above doesn't work)
-        // a.href = '/' + filePath;
-        
+        // Build absolute path using the app base path
+        let filePath = f.path.replace(/^\/+/, ''); // strip any leading slashes
+        a.href = '/WMSU-Receive-System/' + filePath;
         a.target = '_blank';
         a.className = 'flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-crimson-50 hover:border-crimson-200 transition';
         
@@ -587,12 +589,9 @@ if (currentDocument.files && currentDocument.files.length > 0) {
             </svg>
         `;
         filesContainer.appendChild(a);
-        
-        console.log('Created link with href:', a.href);
     });
 } else {
     noFilesMsg.classList.remove('hidden');
-    console.log('No files found for this document');
 }
             
             // Set avatar initials
@@ -640,6 +639,13 @@ if (currentDocument.files && currentDocument.files.length > 0) {
                 const result = await response.json();
                 
                 if (result.success) {
+                    // Immediately check the row's status checkbox for instant feedback
+                    const activeRow = document.querySelector(`.inbox-row[data-id="${currentDocument.id}"]`);
+                    if (activeRow) {
+                        const cb = activeRow.querySelector('.doc-checkbox');
+                        if (cb) cb.checked = true;
+                    }
+
                     Swal.fire({
                         icon: 'success',
                         title: 'Document Received',

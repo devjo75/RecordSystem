@@ -111,7 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($_POST['concerned_faculty'])) $validation_errors[] = 'Concerned Faculty is required.';
         if (empty($_POST['subject'])) $validation_errors[] = 'Subject is required.';
     } elseif ($document_type === 'travel_order') {
-        if (empty($_POST['io_number'])) $validation_errors[] = 'I.O. Number is required.';
+        if (empty($_POST['io_number'])) $validation_errors[] = 'T.O. Number is required.';
         if (empty($_POST['employee_name'])) $validation_errors[] = 'Employee Name is required.';
         if (empty($_POST['subject'])) $validation_errors[] = 'Subject is required.';
     }
@@ -325,7 +325,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute(array_map('intval', $receiver_ids));
                     $receivers_data = $stmt->fetchAll();
                     
-                    $document_label = ucwords(str_replace('_', ' ', $document_type));
                     $sender_name = $_SESSION['full_name'] ?? $user_email;
                     $base_url = 'http://' . $_SERVER['HTTP_HOST'] . '/WMSU-Receive-System';
                     
@@ -566,6 +565,32 @@ $avatar_colors = [
             max-height: 80vh;
             overflow-y: auto;
         }
+        .ac-wrapper { position: relative; }
+        .ac-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 50;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,.1);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .ac-dropdown.is-open { display: block; }
+        .ac-item {
+            padding: 10px 14px;
+            cursor: pointer;
+            border-bottom: 1px solid #f3f4f6;
+        }
+        .ac-item:last-child { border-bottom: none; }
+        .ac-item:hover { background: #FFCCCE; }
+        .ac-item-name { font-size: 14px; font-weight: 600; color: #111827; }
+        .ac-item-meta { font-size: 12px; color: #9CA3AF; margin-top: 2px; }
+        .ac-empty { padding: 10px 14px; font-size: 13px; color: #9CA3AF; }
     </style>
 </head>
 <body class="bg-gray-100">
@@ -682,9 +707,12 @@ $avatar_colors = [
                                             <select id="filterRole" class="w-full px-3 py-2.5 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition duration-200 font-secondary text-sm">
                                                 <option value="">All Roles</option>
                                                 <option value="Admin">Admin</option>
+                                                <option value="Director">Director</option>
+                                                <option value="Dean">Dean</option>
                                                 <option value="Staff">Staff</option>
                                                 <option value="Faculty">Faculty</option>
                                                 <option value="Employee">Employee</option>
+                                                <option value="Student">Student</option>
                                             </select>
                                         </div>
                                         <div>
@@ -805,6 +833,20 @@ $avatar_colors = [
                         <textarea name="subject" rows="3" class="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-crimson-700" placeholder="Document subject"><?= htmlspecialchars($_POST['subject'] ?? '') ?></textarea>
                     </div>
                     <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Destination &amp; Duration</label>
+                        <input type="text" name="destination_duration" class="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-crimson-700" placeholder="e.g., Manila, 3 days" value="<?= htmlspecialchars($_POST['destination_duration'] ?? '') ?>">
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">R.F. (Request Form)</label>
+                            <input type="text" name="rf" class="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-crimson-700" placeholder="e.g., RF-2024-001" value="<?= htmlspecialchars($_POST['rf'] ?? '') ?>">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Number of Participants</label>
+                            <input type="number" name="no_partly" min="0" class="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-crimson-700" placeholder="e.g., 10" value="<?= htmlspecialchars($_POST['no_partly'] ?? '') ?>">
+                        </div>
+                    </div>
+                    <div>
                         <label class="block text-sm font-semibold text-gray-700 mb-2">Source</label>
                         <input type="text" name="source" class="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-crimson-700" placeholder="e.g., Pres-MCO" value="<?= htmlspecialchars($_POST['source'] ?? '') ?>">
                     </div>
@@ -855,8 +897,8 @@ $avatar_colors = [
                 <div class="space-y-4">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-2">I.O. Number <span class="text-red-500">*</span></label>
-                            <input type="text" name="io_number" class="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-crimson-700" placeholder="e.g., IO-2024-001" value="<?= htmlspecialchars($_POST['io_number'] ?? '') ?>">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">T.O. Number <span class="text-red-500">*</span></label>
+                            <input type="text" name="io_number" class="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-crimson-700" placeholder="e.g., TO-2024-001" value="<?= htmlspecialchars($_POST['io_number'] ?? '') ?>">
                         </div>
                         <div>
                             <label class="block text-sm font-semibold text-gray-700 mb-2">Date Issued</label>
@@ -890,6 +932,16 @@ $avatar_colors = [
                         <div>
                             <label class="block text-sm font-semibold text-gray-700 mb-2">Travel End Date</label>
                             <input type="date" name="travel_end_date" class="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-crimson-700" value="<?= htmlspecialchars($_POST['travel_end_date'] ?? '') ?>">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Fund Assistance (₱)</label>
+                            <input type="number" name="fund_assistance" min="0" step="0.01" class="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-crimson-700" placeholder="e.g., 5000.00" value="<?= htmlspecialchars($_POST['fund_assistance'] ?? '0') ?>">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Number of Participants</label>
+                            <input type="number" name="no_partly" min="0" class="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-crimson-700" placeholder="e.g., 5" value="<?= htmlspecialchars($_POST['no_partly'] ?? '') ?>">
                         </div>
                     </div>
                     <div>

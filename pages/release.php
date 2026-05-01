@@ -44,7 +44,7 @@ $query = "
     FROM memorandum_orders m
     LEFT JOIN document_recipients dr ON dr.document_id = m.id 
         AND dr.document_type = 'Memorandum Order'
-    WHERE m.created_by = ? " . ($isAdmin ? "OR 1=1" : "") . "
+    " . ($isAdmin ? "" : "WHERE m.created_by = ?") . "
     GROUP BY m.id
 
     UNION ALL
@@ -65,7 +65,7 @@ $query = "
     FROM special_orders s
     LEFT JOIN document_recipients dr ON dr.document_id = s.id 
         AND dr.document_type = 'Special Order'
-    WHERE s.created_by = ? " . ($isAdmin ? "OR 1=1" : "") . "
+    " . ($isAdmin ? "" : "WHERE s.created_by = ?") . "
     GROUP BY s.id
 
     UNION ALL
@@ -86,14 +86,14 @@ $query = "
     FROM travel_orders t
     LEFT JOIN document_recipients dr ON dr.document_id = t.id 
         AND dr.document_type = 'Travel Order'
-    WHERE t.created_by = ? " . ($isAdmin ? "OR 1=1" : "") . "
+    " . ($isAdmin ? "" : "WHERE t.created_by = ?") . "
     GROUP BY t.id
 
     ORDER BY created_at DESC
 ";
 
 $stmt = $pdo->prepare($query);
-$stmt->execute([$user_id, $user_id, $user_id]);
+$stmt->execute($isAdmin ? [] : [$user_id, $user_id, $user_id]);
 $documents = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Function to get recipients with feedback for a specific document
@@ -109,7 +109,9 @@ function getRecipientsWithFeedback($pdo, $document_type, $document_id) {
         FROM document_recipients dr
         WHERE dr.document_type = ? 
             AND dr.document_id = ?
-        ORDER BY dr.received_at DESC
+        ORDER BY 
+            CASE WHEN dr.status = 'Received' THEN 0 ELSE 1 END,
+            dr.received_at DESC
     ");
     $stmt->execute([$document_type, $document_id]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
