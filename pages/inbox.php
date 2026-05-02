@@ -24,16 +24,11 @@ $user_role = $_SESSION['user_role'] ?? 'user';
 $user_role_display = ucfirst($user_role);
 $user_full_name = $_SESSION['full_name'] ?? $user_email;
 
-// Fetch documents for this user from document_recipients
-// JOIN with respective document tables to get full details
-//
-// FIXES:
-//   1. WHERE now matches only by recipient_email (recipient_id in document_recipients
-//      references recipient_groups.id, NOT users.id — different ID spaces).
-//   2. document_files JOIN maps the proper-case enum in document_recipients
-//      to the lowercase enum in document_files via REPLACE/LOWER.
-//   3. Handles legacy rows where document_type was stored as empty string
-//      by treating them as 'Memorandum Order' fallback via COALESCE on JOINs.
+// ── Ensure deleted_at column exists (run once, safe to repeat) ───────────────
+try {
+    $pdo->exec("ALTER TABLE document_recipients ADD COLUMN IF NOT EXISTS deleted_at DATETIME DEFAULT NULL");
+} catch (PDOException $e) { /* column may already exist */ }
+
 $query = "
     SELECT 
         dr.id as recipient_id,
@@ -102,26 +97,25 @@ $query = "
         df.original_name as file_name,
         df.ocr_text
     FROM document_recipients dr
-    -- Always left-join all three tables; COALESCE above picks the right one
     LEFT JOIN memorandum_orders m ON dr.document_id = m.id
         AND (dr.document_type = 'Memorandum Order' OR dr.document_type = '')
     LEFT JOIN special_orders s ON dr.document_id = s.id
         AND dr.document_type = 'Special Order'
     LEFT JOIN travel_orders t ON dr.document_id = t.id
         AND dr.document_type = 'Travel Order'
-    -- document_files uses lowercase enum ('memorandum','special_order','travel_order')
     LEFT JOIN document_files df
         ON df.document_id = dr.document_id
-        AND df.document_type = LOWER(REPLACE(
+        AND df.document_type = LOWER(
             COALESCE(
                 NULLIF(dr.document_type, ''),
                 CASE WHEN m.id IS NOT NULL THEN 'Memorandum Order'
                      WHEN s.id IS NOT NULL THEN 'Special Order'
                      WHEN t.id IS NOT NULL THEN 'Travel Order'
                 END
-            ),
-        ' ', '_'))
+            )
+        )
     WHERE dr.recipient_email = ?
+      AND (dr.deleted_at IS NULL)
     ORDER BY dr.created_at DESC
 ";
 
@@ -129,12 +123,11 @@ $stmt = $pdo->prepare($query);
 $stmt->execute([$user_email]);
 $documents = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Group documents by recipient_id to avoid duplicates (multiple files per document)
+// Group documents by recipient_id
 $grouped_docs = [];
 foreach ($documents as $doc) {
     $key = $doc['recipient_id'];
     if (!isset($grouped_docs[$key])) {
-        // Use resolved_type if document_type is empty (legacy rows)
         if (empty($doc['document_type'])) {
             $doc['document_type'] = $doc['resolved_type'] ?? 'Memorandum Order';
         }
@@ -151,82 +144,100 @@ foreach ($documents as $doc) {
 }
 $documents = array_values($grouped_docs);
 
-// Count unread (Pending or Sent = not yet acknowledged by user)
 $unread_count = count(array_filter($documents, fn($d) => in_array($d['status'], ['Pending', 'Sent'])));
 
-// Handle marking document as received via AJAX
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'mark_received') {
+// Count trashed messages for sidebar badge
+$trashStmt = $pdo->prepare("SELECT COUNT(*) FROM document_recipients WHERE recipient_email = ? AND deleted_at IS NOT NULL");
+$trashStmt->execute([$user_email]);
+$trash_count = (int)$trashStmt->fetchColumn();
+
+// ── AJAX: mark received ───────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+
     header('Content-Type: application/json');
-    
-    $recipient_id = $_POST['recipient_id'] ?? 0;
-    $token = $_POST['token'] ?? '';
-    $feedback = $_POST['feedback'] ?? '';
-    
-    try {
-        $pdo->beginTransaction();
 
-        $recipient_id_resolved = (int)$recipient_id; // may be 0 if token path
+    // ── Move to trash ─────────────────────────────────────────────────────────
+    if ($_POST['action'] === 'trash_message') {
+        $recipient_id = (int)($_POST['recipient_id'] ?? 0);
+        if (!$recipient_id) { echo json_encode(['success'=>false,'message'=>'Invalid ID']); exit; }
 
-        if ($token) {
-            // Update using token
-            $stmt = $pdo->prepare("
-                UPDATE document_recipients 
-                SET status = 'Received', 
-                    received_at = NOW(),
-                    feedback = ?
-                WHERE confirmation_token = ? AND status IN ('Pending', 'Sent')
-            ");
-            $stmt->execute([$feedback, $token]);
+        $stmt = $pdo->prepare("
+            UPDATE document_recipients
+               SET deleted_at = NOW()
+             WHERE id = ? AND recipient_email = ? AND deleted_at IS NULL
+        ");
+        $stmt->execute([$recipient_id, $user_email]);
 
-            // Resolve the actual recipient id from the token for history insert
-            if ($stmt->rowCount() > 0) {
-                $id_row = $pdo->prepare("SELECT id FROM document_recipients WHERE confirmation_token = ? LIMIT 1");
-                $id_row->execute([$token]);
-                $recipient_id_resolved = (int)($id_row->fetchColumn() ?: 0);
-            }
-        } else {
-            // Update using ID
-            $stmt = $pdo->prepare("
-                UPDATE document_recipients 
-                SET status = 'Received', 
-                    received_at = NOW(),
-                    feedback = ?
-                WHERE id = ? AND recipient_email = ? AND status IN ('Pending', 'Sent')
-            ");
-            $stmt->execute([$feedback, $recipient_id, $user_email]);
-        }
-        
-        if ($stmt->rowCount() > 0) {
-            // Add to document history — use resolved id so token path works too
-            if ($recipient_id_resolved > 0) {
-                $pdo->prepare("
-                    INSERT INTO document_history (document_type, document_id, document_number, action, action_by, action_details)
-                    SELECT dr.document_type, dr.document_id, 
-                           CASE 
-                               WHEN dr.document_type = 'Memorandum Order' THEN m.mo_number
-                               WHEN dr.document_type = 'Special Order' THEN s.so_number
-                               WHEN dr.document_type = 'Travel Order' THEN t.io_number
-                           END,
-                           'Received', ?, CONCAT('Document received by ', ?, IF(? != '', CONCAT(' with feedback: ', ?), ''))
-                    FROM document_recipients dr
-                    LEFT JOIN memorandum_orders m ON dr.document_type = 'Memorandum Order' AND dr.document_id = m.id
-                    LEFT JOIN special_orders s ON dr.document_type = 'Special Order' AND dr.document_id = s.id
-                    LEFT JOIN travel_orders t ON dr.document_type = 'Travel Order' AND dr.document_id = t.id
-                    WHERE dr.id = ?
-                ")->execute([$user_id, $user_full_name, $feedback, $feedback, $recipient_id_resolved]);
-            }
-
-            $pdo->commit();
-            echo json_encode(['success' => true, 'message' => 'Document marked as received with acknowledgment']);
-        } else {
-            $pdo->rollBack();
-            echo json_encode(['success' => false, 'message' => 'Document already received or not found']);
-        }
-    } catch (PDOException $e) {
-        $pdo->rollBack();
-        echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
+        echo json_encode($stmt->rowCount() > 0
+            ? ['success'=>true,  'message'=>'Message moved to trash.']
+            : ['success'=>false, 'message'=>'Message not found or already trashed.']
+        );
+        exit;
     }
-    exit;
+
+    // ── Mark received ─────────────────────────────────────────────────────────
+    if ($_POST['action'] === 'mark_received') {
+        $recipient_id = $_POST['recipient_id'] ?? 0;
+        $token        = $_POST['token']        ?? '';
+        $feedback     = $_POST['feedback']     ?? '';
+
+        try {
+            $pdo->beginTransaction();
+            $recipient_id_resolved = (int)$recipient_id;
+
+            if ($token) {
+                $stmt = $pdo->prepare("
+                    UPDATE document_recipients 
+                       SET status = 'Received', received_at = NOW(), feedback = ?
+                     WHERE confirmation_token = ? AND status IN ('Pending', 'Sent')
+                ");
+                $stmt->execute([$feedback, $token]);
+
+                if ($stmt->rowCount() > 0) {
+                    $id_row = $pdo->prepare("SELECT id FROM document_recipients WHERE confirmation_token = ? LIMIT 1");
+                    $id_row->execute([$token]);
+                    $recipient_id_resolved = (int)($id_row->fetchColumn() ?: 0);
+                }
+            } else {
+                $stmt = $pdo->prepare("
+                    UPDATE document_recipients 
+                       SET status = 'Received', received_at = NOW(), feedback = ?
+                     WHERE id = ? AND recipient_email = ? AND status IN ('Pending', 'Sent')
+                ");
+                $stmt->execute([$feedback, $recipient_id, $user_email]);
+            }
+
+            if ($stmt->rowCount() > 0) {
+                if ($recipient_id_resolved > 0) {
+                    $pdo->prepare("
+                        INSERT INTO document_history (document_type, document_id, document_number, action, action_by, action_details)
+                        SELECT dr.document_type, dr.document_id, 
+                               CASE 
+                                   WHEN dr.document_type = 'Memorandum Order' THEN m.mo_number
+                                   WHEN dr.document_type = 'Special Order'    THEN s.so_number
+                                   WHEN dr.document_type = 'Travel Order'     THEN t.io_number
+                               END,
+                               'Received', ?, CONCAT('Document received by ', ?, IF(? != '', CONCAT(' with feedback: ', ?), ''))
+                        FROM document_recipients dr
+                        LEFT JOIN memorandum_orders m ON dr.document_type = 'Memorandum Order' AND dr.document_id = m.id
+                        LEFT JOIN special_orders    s ON dr.document_type = 'Special Order'    AND dr.document_id = s.id
+                        LEFT JOIN travel_orders     t ON dr.document_type = 'Travel Order'     AND dr.document_id = t.id
+                        WHERE dr.id = ?
+                    ")->execute([$user_id, $user_full_name, $feedback, $feedback, $recipient_id_resolved]);
+                }
+
+                $pdo->commit();
+                echo json_encode(['success'=>true, 'message'=>'Document marked as received with acknowledgment']);
+            } else {
+                $pdo->rollBack();
+                echo json_encode(['success'=>false, 'message'=>'Document already received or not found']);
+            }
+        } catch (PDOException $e) {
+            $pdo->rollBack();
+            echo json_encode(['success'=>false, 'message'=>'Database error: '.$e->getMessage()]);
+        }
+        exit;
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -263,15 +274,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     <style>
         body { font-family:'IBM Plex Sans',sans-serif; }
         h1,h2,h3,h4,h5,h6 { font-family:'Noto Nastaliq Urdu',serif; }
-        .inbox-row {
-            transition: all 0.2s ease;
-        }
-        .inbox-row:hover {
-            transform: translateY(-2px);
-        }
-        .status-badge {
-            transition: all 0.2s ease;
-        }
+        .inbox-row { transition: all 0.2s ease; }
+        .inbox-row:hover { transform: translateY(-2px); }
+        .status-badge { transition: all 0.2s ease; }
+
     </style>
 </head>
 <body class="bg-gray-100">
@@ -296,6 +302,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         </div>
                     </div>
                     <div class="flex items-center space-x-4">
+                      
                         <div class="flex items-center space-x-3">
                             <div class="hidden sm:block text-right">
                                 <p class="text-sm font-semibold text-gray-800 font-secondary"><?= htmlspecialchars($user_email ?: 'Guest User') ?></p>
@@ -381,8 +388,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     $initials = getInitialsFromEmail($doc['sender_email'] ?? 'Unknown');
                                     $isUnread = in_array($doc['status'], ['Pending', 'Sent']);
                                     $statusColor = $doc['status'] === 'Pending' ? 'bg-amber-100 text-amber-700' 
-                                                 : ($doc['status'] === 'Sent'     ? 'bg-blue-100 text-blue-700' 
-                                                                                  : 'bg-green-100 text-green-700');
+                                                 : ($doc['status'] === 'Sent'    ? 'bg-blue-100 text-blue-700' 
+                                                                                 : 'bg-green-100 text-green-700');
                                     $statusIcon = $doc['status'] === 'Received' ? '✓' : '●';
                                     $rowClass = $isUnread ? 'border-crimson-200 bg-crimson-50' : 'bg-gray-50 border-transparent';
                                 ?>
@@ -444,6 +451,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                         <span class="text-xs text-gray-400 font-secondary">
                                             <?= date('M d, Y', strtotime($doc['received_date'] ?? 'now')) ?>
                                         </span>
+                                        <!-- Delete button: only available after message is acknowledged -->
+                                        <?php if ($doc['status'] === 'Received'): ?>
+                                            <button onclick="openDeleteModal(event, <?= $doc['recipient_id'] ?>, '<?= htmlspecialchars(addslashes($doc['sender_email'] ?? 'Unknown'), ENT_QUOTES) ?>')"
+                                                    class="px-3 py-1.5 text-xs font-semibold bg-crimson-50 text-crimson-700 hover:bg-crimson-100 rounded-lg transition font-secondary">
+                                                Delete
+                                            </button>
+                                        <?php else: ?>
+                                            <span title="Acknowledge the document first before deleting"
+                                                  class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-gray-300 bg-gray-50 border border-gray-200 rounded-lg cursor-not-allowed select-none">
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m0 0v2m0-2h2m-2 0H10m2-6a2 2 0 100-4 2 2 0 000 4zm6 4a8 8 0 11-16 0 8 8 0 0116 0z"/>
+                                                </svg>
+                                                Delete
+                                            </span>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                                 <?php endforeach; ?>
@@ -463,7 +485,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         </div>
     </main>
 
-    <!-- Document Modal -->
+    <!-- Delete (Trash) Confirmation Modal -->
+    <div id="deleteModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
+            <div class="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+                <h3 class="text-lg font-bold text-gray-800 font-main">Move to Trash</h3>
+                <button onclick="closeDeleteModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            </div>
+            <div class="px-6 py-6">
+                <div class="flex items-start gap-4">
+                    <div class="w-11 h-11 rounded-full bg-crimson-50 flex items-center justify-center flex-shrink-0">
+                        <svg class="w-5 h-5 text-crimson-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-700 font-secondary">Are you sure you want to delete the message from</p>
+                        <p id="deleteModalSender" class="text-sm font-bold text-gray-900 font-secondary mt-0.5 truncate"></p>
+                        <p class="text-xs text-gray-400 font-secondary mt-2">This message will be moved to Trash. You can restore or permanently delete it there.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="px-6 py-4 bg-gray-50 flex items-center justify-end gap-3">
+                <button onclick="closeDeleteModal()"
+                    class="px-4 py-2 text-sm font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-100 transition font-secondary">
+                    Cancel
+                </button>
+                <button id="deleteModalConfirmBtn"
+                    class="px-4 py-2 text-sm font-semibold bg-crimson-700 text-white rounded-lg hover:bg-crimson-800 transition font-secondary">
+                    Move to Trash
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Document Modal (unchanged) -->
     <div id="documentModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
         <div class="bg-white w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden relative max-h-[90vh] flex flex-col">
             <div class="bg-crimson-700 text-white px-6 py-5 flex items-center justify-between flex-shrink-0">
@@ -511,31 +567,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 
                 <div class="mb-6" id="filesSection">
                     <p class="text-xs text-gray-500 font-secondary mb-2">Attached Files</p>
-                    <div id="modalFiles" class="space-y-2">
-                        <!-- Files populated dynamically by viewDocument() -->
-                    </div>
+                    <div id="modalFiles" class="space-y-2"></div>
                     <p id="noFilesMsg" class="text-xs text-gray-400 hidden font-secondary">No files attached.</p>
                 </div>
 
-                <!-- OCR Extracted Text Section -->
                 <div id="ocrSection" class="hidden mt-4">
                     <div class="flex items-center justify-between mb-2">
                         <p class="text-xs font-semibold text-blue-700 font-secondary uppercase tracking-wide">
                             📄 Extracted Text (Soft Copy)
                         </p>
                         <div class="flex gap-2">
-                            <button onclick="copyOcrText()" class="text-xs px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-secondary">
-                                Copy Text
-                            </button>
-                            <button onclick="downloadOcrPDF()" class="text-xs px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-secondary flex items-center gap-1">
-                                ⬇ Download PDF
-                            </button>
+                            <button onclick="copyOcrText()" class="text-xs px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-secondary">Copy Text</button>
+                            <button onclick="downloadOcrPDF()" class="text-xs px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-secondary flex items-center gap-1">⬇ Download PDF</button>
                         </div>
                     </div>
                     <div id="ocrTextBox" class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-gray-700 font-secondary whitespace-pre-wrap max-h-48 overflow-y-auto"></div>
                     <p class="text-xs text-gray-400 mt-1 font-secondary">This text was automatically extracted from the uploaded image using OCR.</p>
                 </div>
-
             </div>
             
             <div class="p-6 border-t border-gray-200 bg-gray-50 flex-shrink-0">
@@ -547,105 +595,179 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     </div>
 
     <script>
+        const appBase = <?php
+            $_ib_root = rtrim(str_replace('\\', '/', realpath(__DIR__ . '/..')), '/');
+            $_ib_doc  = rtrim(str_replace('\\', '/', realpath($_SERVER['DOCUMENT_ROOT'])), '/');
+            echo json_encode(str_replace($_ib_doc, '', $_ib_root) . '/');
+        ?>;
         let currentDocument = null;
-        
+
+        // ── Delete modal ──────────────────────────────────────────────────────
+        let _deleteTargetId  = null;
+
+        function openDeleteModal(event, recipientId, senderEmail) {
+            event.stopPropagation(); // don't open the document modal
+            _deleteTargetId = recipientId;
+            document.getElementById('deleteModalSender').textContent = senderEmail;
+            const modal = document.getElementById('deleteModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeDeleteModal() {
+            const modal = document.getElementById('deleteModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            _deleteTargetId = null;
+        }
+
+        document.getElementById('deleteModal').addEventListener('click', function(e) {
+            if (e.target === this) closeDeleteModal();
+        });
+
+        document.getElementById('deleteModalConfirmBtn').addEventListener('click', async function() {
+            if (!_deleteTargetId) return;
+
+            this.disabled    = true;
+            this.textContent = 'Moving…';
+
+            try {
+                const fd = new FormData();
+                fd.append('action', 'trash_message');
+                fd.append('recipient_id', _deleteTargetId);
+
+                const res  = await fetch('', { method: 'POST', body: fd });
+                const data = await res.json();
+
+                if (data.success) {
+                    closeDeleteModal();
+
+                    // Animate row out
+                    const row = document.querySelector(`.inbox-row[data-id="${_deleteTargetId}"]`);
+                    if (row) {
+                        row.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                        row.style.opacity    = '0';
+                        row.style.transform  = 'translateX(40px)';
+                        setTimeout(() => {
+                            row.remove();
+                            filterAndSortFn();
+
+                            // Bump trash badge
+                            const badge = document.querySelector('a[href="trash.php"] span.bg-gray-400');
+                            if (badge) {
+                                badge.textContent = parseInt(badge.textContent || '0') + 1;
+                            } else {
+                                const trashLink = document.querySelector('a[href="trash.php"]');
+                                if (trashLink) {
+                                    const span = document.createElement('span');
+                                    span.className = 'absolute -top-1 -right-1 w-5 h-5 bg-gray-400 text-white text-xs rounded-full flex items-center justify-center font-bold';
+                                    span.textContent = '1';
+                                    trashLink.style.position = 'relative';
+                                    trashLink.appendChild(span);
+                                }
+                            }
+                        }, 320);
+                    }
+                } else {
+                    closeDeleteModal();
+                    Swal.fire({ icon: 'error', title: 'Error', text: data.message, confirmButtonColor: '#AA0003' });
+                }
+            } catch (e) {
+                closeDeleteModal();
+                Swal.fire({ icon: 'error', title: 'Error', text: 'Could not move message to trash.', confirmButtonColor: '#AA0003' });
+            }
+
+            this.disabled    = false;
+            this.textContent = 'Move to Trash';
+        });
+
+        // ── View document modal ───────────────────────────────────────────────
         function viewDocument(element) {
             currentDocument = {
-                id: element.dataset.id,
-                token: element.dataset.token,
-                sender: element.dataset.sender,
-                subject: element.dataset.subject,
-                type: element.dataset.type,
-                status: element.dataset.status,
-                date: element.dataset.date,
-                number: element.dataset.number,
+                id:        element.dataset.id,
+                token:     element.dataset.token,
+                sender:    element.dataset.sender,
+                subject:   element.dataset.subject,
+                type:      element.dataset.type,
+                status:    element.dataset.status,
+                date:      element.dataset.date,
+                number:    element.dataset.number,
                 concerned: element.dataset.concerned,
-                issued: element.dataset.issued,
-                feedback: element.dataset.feedback || '',
-                files: JSON.parse(element.dataset.files || '[]')
+                issued:    element.dataset.issued,
+                feedback:  element.dataset.feedback || '',
+                files:     JSON.parse(element.dataset.files || '[]')
             };
             
-            // Populate modal
-            document.getElementById('modalSender').innerText = currentDocument.sender;
+            document.getElementById('modalSender').innerText         = currentDocument.sender;
             document.getElementById('modalDocumentNumber').innerText = currentDocument.number;
-            document.getElementById('modalType').innerText = currentDocument.type;
-            document.getElementById('modalSubject').innerText = currentDocument.subject;
-            document.getElementById('modalConcerned').innerText = currentDocument.concerned;
-            document.getElementById('modalDateIssued').innerText = currentDocument.issued ? new Date(currentDocument.issued).toLocaleDateString() : 'N/A';
-            document.getElementById('modalReceivedDate').innerText = currentDocument.date ? new Date(currentDocument.date).toLocaleDateString() : 'N/A';
+            document.getElementById('modalType').innerText           = currentDocument.type;
+            document.getElementById('modalSubject').innerText        = currentDocument.subject;
+            document.getElementById('modalConcerned').innerText      = currentDocument.concerned;
+            document.getElementById('modalDateIssued').innerText     = currentDocument.issued ? new Date(currentDocument.issued).toLocaleDateString() : 'N/A';
+            document.getElementById('modalReceivedDate').innerText   = currentDocument.date   ? new Date(currentDocument.date).toLocaleDateString()   : 'N/A';
             
-            // Set existing feedback if any
             const feedbackTextarea = document.getElementById('modalFeedback');
             if (currentDocument.status === 'Received' && currentDocument.feedback) {
-                feedbackTextarea.value = currentDocument.feedback;
+                feedbackTextarea.value    = currentDocument.feedback;
                 feedbackTextarea.disabled = true;
                 feedbackTextarea.classList.add('bg-gray-100');
             } else {
-                feedbackTextarea.value = '';
+                feedbackTextarea.value    = '';
                 feedbackTextarea.disabled = false;
                 feedbackTextarea.classList.remove('bg-gray-100');
             }
             
-const filesContainer = document.getElementById('modalFiles');
-const noFilesMsg = document.getElementById('noFilesMsg');
-filesContainer.innerHTML = '';
+            const filesContainer = document.getElementById('modalFiles');
+            const noFilesMsg     = document.getElementById('noFilesMsg');
+            filesContainer.innerHTML = '';
 
-// Reset OCR section
-document.getElementById('ocrSection').classList.add('hidden');
-document.getElementById('ocrTextBox').innerText = '';
+            document.getElementById('ocrSection').classList.add('hidden');
+            document.getElementById('ocrTextBox').innerText = '';
 
-if (currentDocument.files && currentDocument.files.length > 0) {
-    noFilesMsg.classList.add('hidden');
-    
-    currentDocument.files.forEach(f => {
-        const a = document.createElement('a');
-        // Build absolute path using the app base path
-        let filePath = f.path.replace(/^\/+/, ''); // strip any leading slashes
-        a.href = '/WMSU-Receive-System/' + filePath;
-        a.target = '_blank';
-        a.className = 'flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-crimson-50 hover:border-crimson-200 transition';
-        
-        a.innerHTML = `
-            <svg class="w-5 h-5 text-crimson-700 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-            </svg>
-            <span class="text-sm font-secondary text-gray-700 truncate">${f.name || 'Attached file'}</span>
-            <svg class="w-4 h-4 text-gray-400 ml-auto flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
-            </svg>
-        `;
-        filesContainer.appendChild(a);
+            if (currentDocument.files && currentDocument.files.length > 0) {
+                noFilesMsg.classList.add('hidden');
+                currentDocument.files.forEach(f => {
+                    const a = document.createElement('a');
+                    let filePath = f.path.replace(/^\/+/, '');
+                    a.href   = appBase + filePath;
+                    a.target = '_blank';
+                    a.className = 'flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-crimson-50 hover:border-crimson-200 transition';
+                    a.innerHTML = `
+                        <svg class="w-5 h-5 text-crimson-700 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        <span class="text-sm font-secondary text-gray-700 truncate">${f.name || 'Attached file'}</span>
+                        <svg class="w-4 h-4 text-gray-400 ml-auto flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                        </svg>`;
+                    filesContainer.appendChild(a);
 
-        // Show OCR text if this file has it
-        if (f.ocr_text && f.ocr_text.trim() !== '') {
-            document.getElementById('ocrTextBox').innerText = f.ocr_text;
-            document.getElementById('ocrSection').classList.remove('hidden');
-        }
-    });
-} else {
-    noFilesMsg.classList.remove('hidden');
-}
+                    const ocrBox = document.getElementById('ocrTextBox');
+                    if (f.ocr_text && f.ocr_text.trim() !== '' && ocrBox.innerText.trim() === '') {
+                        ocrBox.innerText = f.ocr_text;
+                        document.getElementById('ocrSection').classList.remove('hidden');
+                    }
+                });
+            } else {
+                noFilesMsg.classList.remove('hidden');
+            }
             
-            // Set avatar initials
             let senderName = currentDocument.sender.split('@')[0];
-            let initials = senderName.substring(0, 2).toUpperCase();
-            document.getElementById('modalAvatar').innerText = initials;
+            document.getElementById('modalAvatar').innerText = senderName.substring(0, 2).toUpperCase();
             
-            // Update button based on status
             const markBtn = document.getElementById('markReceivedBtn');
             if (currentDocument.status === 'Received') {
                 markBtn.innerHTML = '✓ Already Received';
-                markBtn.disabled = true;
+                markBtn.disabled  = true;
                 markBtn.classList.remove('bg-crimson-700', 'hover:bg-crimson-800');
                 markBtn.classList.add('bg-gray-400', 'cursor-not-allowed');
             } else {
                 markBtn.innerHTML = '✓ Mark as Received';
-                markBtn.disabled = false;
+                markBtn.disabled  = false;
                 markBtn.classList.add('bg-crimson-700', 'hover:bg-crimson-800');
                 markBtn.classList.remove('bg-gray-400', 'cursor-not-allowed');
             }
             
-            // Show modal
             const modal = document.getElementById('documentModal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -653,9 +775,7 @@ if (currentDocument.files && currentDocument.files.length > 0) {
         
         document.getElementById('markReceivedBtn').addEventListener('click', async function() {
             if (!currentDocument || currentDocument.status === 'Received') return;
-            
             const feedback = document.getElementById('modalFeedback').value;
-            
             try {
                 const formData = new FormData();
                 formData.append('action', 'mark_received');
@@ -663,62 +783,34 @@ if (currentDocument.files && currentDocument.files.length > 0) {
                 formData.append('token', currentDocument.token);
                 formData.append('feedback', feedback);
                 
-                const response = await fetch('', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const result = await response.json();
+                const response = await fetch('', { method: 'POST', body: formData });
+                const result   = await response.json();
                 
                 if (result.success) {
-                    // Immediately check the row's status checkbox for instant feedback
                     const activeRow = document.querySelector(`.inbox-row[data-id="${currentDocument.id}"]`);
                     if (activeRow) {
                         const cb = activeRow.querySelector('.doc-checkbox');
                         if (cb) cb.checked = true;
                     }
-
-                    Swal.fire({
-                        icon: 'success',
-                        title: 'Document Received',
-                        text: feedback ? 'Document marked as received with your feedback.' : 'Document marked as received.',
-                        confirmButtonColor: '#AA0003'
-                    }).then(() => {
-                        location.reload();
-                    });
+                    Swal.fire({ icon: 'success', title: 'Document Received', text: feedback ? 'Document marked as received with your feedback.' : 'Document marked as received.', confirmButtonColor: '#AA0003' })
+                        .then(() => location.reload());
                 } else {
-                    Swal.fire({
-                        icon: 'error',
-                        title: 'Error',
-                        text: result.message,
-                        confirmButtonColor: '#AA0003'
-                    });
+                    Swal.fire({ icon: 'error', title: 'Error', text: result.message, confirmButtonColor: '#AA0003' });
                 }
             } catch (error) {
-                Swal.fire({
-                    icon: 'error',
-                    title: 'Error',
-                    text: 'Failed to mark document as received',
-                    confirmButtonColor: '#AA0003'
-                });
+                Swal.fire({ icon: 'error', title: 'Error', text: 'Failed to mark document as received', confirmButtonColor: '#AA0003' });
             }
         });
         
         function copyOcrText() {
             const text = document.getElementById('ocrTextBox').innerText;
             navigator.clipboard.writeText(text).then(() => {
-                Swal.fire({
-                    icon: 'success',
-                    title: 'Copied!',
-                    text: 'OCR text copied to clipboard.',
-                    timer: 1500,
-                    showConfirmButton: false
-                });
+                Swal.fire({ icon: 'success', title: 'Copied!', text: 'OCR text copied to clipboard.', timer: 1500, showConfirmButton: false });
             }).catch(() => {
                 Swal.fire({ icon: 'error', title: 'Failed to copy', text: 'Please copy the text manually.', confirmButtonColor: '#AA0003' });
             });
         }
-
+        
         function closeModal() {
             const modal = document.getElementById('documentModal');
             modal.classList.add('hidden');
@@ -730,57 +822,50 @@ if (currentDocument.files && currentDocument.files.length > 0) {
             if (e.target === this) closeModal();
         });
         
-        // Search, Filter & Sort
+        // ── Search, Filter & Sort ─────────────────────────────────────────────
+        let filterAndSortFn = () => {};
+
         (function() {
             const searchEl = document.getElementById('inboxSearch');
             const statusEl = document.getElementById('statusFilter');
-            const typeEl = document.getElementById('typeFilter');
-            const sortEl = document.getElementById('sortSelect');
-            const countEl = document.getElementById('rowCount');
-            const emptyEl = document.getElementById('inboxEmpty');
+            const typeEl   = document.getElementById('typeFilter');
+            const sortEl   = document.getElementById('sortSelect');
+            const countEl  = document.getElementById('rowCount');
+            const emptyEl  = document.getElementById('inboxEmpty');
             const resetBtn = document.getElementById('resetFilters');
             const container = document.getElementById('inboxRows');
             const originalEmptyState = document.getElementById('emptyState');
             
             function filterAndSort() {
-                const q = searchEl.value.toLowerCase().trim();
+                const q  = searchEl.value.toLowerCase().trim();
                 const sf = statusEl.value;
                 const tf = typeEl.value;
                 const so = sortEl.value;
                 
                 const rows = Array.from(container.querySelectorAll('.inbox-row'));
+                if (rows.length === 0) { countEl.textContent = '0 messages'; return; }
                 
-                if (rows.length === 0) return;
-                
-                // Show/hide based on filters
                 rows.forEach(row => {
-                    const matchQ = !q || row.dataset.sender.toLowerCase().includes(q)
+                    const matchQ  = !q  || row.dataset.sender.toLowerCase().includes(q)
                                          || row.dataset.subject.toLowerCase().includes(q)
                                          || row.dataset.type.toLowerCase().includes(q)
                                          || (row.dataset.number && row.dataset.number.toLowerCase().includes(q));
                     const matchSF = !sf || row.dataset.status === sf;
-                    const matchTF = !tf || row.dataset.type === tf;
+                    const matchTF = !tf || row.dataset.type   === tf;
                     row.style.display = (matchQ && matchSF && matchTF) ? '' : 'none';
                 });
                 
-                // Collect visible rows
                 const visible = rows.filter(r => r.style.display !== 'none');
-                
-                // Sort visible rows
                 visible.sort((a, b) => {
-                    if (so === 'date-desc') return new Date(b.dataset.date) - new Date(a.dataset.date);
-                    if (so === 'date-asc') return new Date(a.dataset.date) - new Date(b.dataset.date);
-                    if (so === 'sender-asc') return a.dataset.sender.localeCompare(b.dataset.sender);
+                    if (so === 'date-desc')   return new Date(b.dataset.date) - new Date(a.dataset.date);
+                    if (so === 'date-asc')    return new Date(a.dataset.date) - new Date(b.dataset.date);
+                    if (so === 'sender-asc')  return a.dataset.sender.localeCompare(b.dataset.sender);
                     if (so === 'sender-desc') return b.dataset.sender.localeCompare(a.dataset.sender);
                     return 0;
                 });
-                
-                // Re-append in sorted order
                 visible.forEach(r => container.appendChild(r));
                 
-                // Update count & empty state
                 countEl.textContent = visible.length + ' message' + (visible.length !== 1 ? 's' : '');
-                
                 if (visible.length === 0) {
                     emptyEl.classList.remove('hidden');
                     if (originalEmptyState) originalEmptyState.classList.add('hidden');
@@ -788,25 +873,21 @@ if (currentDocument.files && currentDocument.files.length > 0) {
                     emptyEl.classList.add('hidden');
                     if (originalEmptyState) originalEmptyState.classList.remove('hidden');
                 }
-                
-                // Show reset button if any filter/search is active
-                const isFiltered = q || sf || tf || so !== 'date-desc';
-                resetBtn.classList.toggle('hidden', !isFiltered);
+                resetBtn.classList.toggle('hidden', !(q || sf || tf || so !== 'date-desc'));
             }
-            
+
+            filterAndSortFn = filterAndSort; // expose for trash button
+
             function resetAll() {
-                searchEl.value = '';
-                statusEl.value = '';
-                typeEl.value = '';
-                sortEl.value = 'date-desc';
+                searchEl.value = ''; statusEl.value = ''; typeEl.value = ''; sortEl.value = 'date-desc';
                 filterAndSort();
             }
             
             if (searchEl && statusEl && typeEl && sortEl) {
-                searchEl.addEventListener('input', filterAndSort);
+                searchEl.addEventListener('input',  filterAndSort);
                 statusEl.addEventListener('change', filterAndSort);
-                typeEl.addEventListener('change', filterAndSort);
-                sortEl.addEventListener('change', filterAndSort);
+                typeEl.addEventListener('change',   filterAndSort);
+                sortEl.addEventListener('change',   filterAndSort);
                 if (resetBtn) resetBtn.addEventListener('click', resetAll);
                 filterAndSort();
             }
@@ -814,181 +895,98 @@ if (currentDocument.files && currentDocument.files.length > 0) {
     </script>
     <script src="../js/sidebar.js"></script>
 
-    <!-- jsPDF for client-side PDF generation -->
+    <!-- jsPDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script>
     function downloadOcrPDF() {
         if (!currentDocument) return;
-
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-
         const pageW  = doc.internal.pageSize.getWidth();
         const pageH  = doc.internal.pageSize.getHeight();
         const margin = 20;
         const usableW = pageW - margin * 2;
         let y = margin;
 
-        // ── Helper: add a new page and reset Y ──────────────────────────
         function checkPage(needed) {
-            if (y + needed > pageH - margin) {
-                doc.addPage();
-                y = margin;
-                drawPageBorder();
-            }
+            if (y + needed > pageH - margin) { doc.addPage(); y = margin; drawPageBorder(); }
         }
-
-        // ── Thin border on every page ────────────────────────────────────
         function drawPageBorder() {
-            doc.setDrawColor(170, 0, 3);   // crimson
-            doc.setLineWidth(0.5);
+            doc.setDrawColor(170, 0, 3); doc.setLineWidth(0.5);
             doc.rect(10, 10, pageW - 20, pageH - 20);
         }
         drawPageBorder();
 
-        // ── HEADER: red banner ───────────────────────────────────────────
         doc.setFillColor(170, 0, 3);
         doc.rect(margin, y, usableW, 18, 'F');
-
-        doc.setTextColor(255, 255, 255);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(13);
+        doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
         doc.text('Western Mindanao State University', pageW / 2, y + 7, { align: 'center' });
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9); doc.setFont('helvetica', 'normal');
         doc.text('Document Management System — Soft Copy', pageW / 2, y + 13, { align: 'center' });
         y += 24;
 
-        // ── Thin red underline ───────────────────────────────────────────
-        doc.setDrawColor(170, 0, 3);
-        doc.setLineWidth(0.8);
-        doc.line(margin, y, margin + usableW, y);
-        y += 6;
+        doc.setDrawColor(170, 0, 3); doc.setLineWidth(0.8);
+        doc.line(margin, y, margin + usableW, y); y += 6;
 
-        // ── DOCUMENT DETAILS TABLE ───────────────────────────────────────
         const details = [
             ['Document Type',   currentDocument.type   || 'N/A'],
             ['Document No.',    currentDocument.number || 'N/A'],
             ['Sender',          currentDocument.sender || 'N/A'],
             ['Concerned Person',currentDocument.concerned || 'N/A'],
             ['Subject',         currentDocument.subject || 'N/A'],
-            ['Date Issued',     currentDocument.issued
-                                    ? new Date(currentDocument.issued).toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
-                                    : 'N/A'],
-            ['Received On',     currentDocument.date
-                                    ? new Date(currentDocument.date).toLocaleDateString('en-PH', {year:'numeric',month:'long',day:'numeric'})
-                                    : 'N/A'],
+            ['Date Issued',     currentDocument.issued  ? new Date(currentDocument.issued).toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric'}) : 'N/A'],
+            ['Received On',     currentDocument.date    ? new Date(currentDocument.date).toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric'})   : 'N/A'],
         ];
-
-        const labelW = 48;
-        const valueW = usableW - labelW - 2;
-
+        const labelW = 48; const valueW = usableW - labelW - 2;
         details.forEach(([label, value]) => {
-            // wrap value
             doc.setFontSize(8.5);
             const valueLines = doc.splitTextToSize(value, valueW);
             const rowH = Math.max(7, valueLines.length * 5 + 2);
             checkPage(rowH + 1);
-
-            // label cell
-            doc.setFillColor(245, 245, 245);
-            doc.rect(margin, y, labelW, rowH, 'F');
-            doc.setDrawColor(220, 220, 220);
-            doc.setLineWidth(0.2);
-            doc.rect(margin, y, labelW, rowH);
-
-            doc.setFont('helvetica', 'bold');
-            doc.setTextColor(80, 80, 80);
-            doc.text(label, margin + 2, y + 4.5);
-
-            // value cell
-            doc.setFillColor(255, 255, 255);
-            doc.rect(margin + labelW + 2, y, valueW, rowH, 'F');
-            doc.rect(margin + labelW + 2, y, valueW, rowH);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setTextColor(30, 30, 30);
-            doc.text(valueLines, margin + labelW + 4, y + 4.5);
-
+            doc.setFillColor(245,245,245); doc.rect(margin, y, labelW, rowH, 'F');
+            doc.setDrawColor(220,220,220); doc.setLineWidth(0.2); doc.rect(margin, y, labelW, rowH);
+            doc.setFont('helvetica','bold'); doc.setTextColor(80,80,80);
+            doc.text(label, margin+2, y+4.5);
+            doc.setFillColor(255,255,255); doc.rect(margin+labelW+2, y, valueW, rowH, 'F');
+            doc.rect(margin+labelW+2, y, valueW, rowH);
+            doc.setFont('helvetica','normal'); doc.setTextColor(30,30,30);
+            doc.text(valueLines, margin+labelW+4, y+4.5);
             y += rowH + 1;
         });
-
         y += 6;
 
-        // ── EXTRACTED TEXT SECTION HEADER ────────────────────────────────
         checkPage(14);
-        doc.setFillColor(219, 234, 254);   // blue-100
-        doc.rect(margin, y, usableW, 10, 'F');
-        doc.setDrawColor(147, 197, 253);   // blue-300
-        doc.setLineWidth(0.3);
-        doc.rect(margin, y, usableW, 10);
+        doc.setFillColor(219,234,254); doc.rect(margin, y, usableW, 10, 'F');
+        doc.setDrawColor(147,197,253); doc.setLineWidth(0.3); doc.rect(margin, y, usableW, 10);
+        doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(29,78,216);
+        doc.text('Extracted Text (Soft Copy)', margin+3, y+6.5); y += 13;
 
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(10);
-        doc.setTextColor(29, 78, 216);     // blue-700
-        doc.text('Extracted Text (Soft Copy)', margin + 3, y + 6.5);
-        y += 13;
-
-        // ── EXTRACTED TEXT BODY ──────────────────────────────────────────
         const rawText = document.getElementById('ocrTextBox').innerText.trim();
-
         if (!rawText) {
-            doc.setFont('helvetica', 'italic');
-            doc.setFontSize(9);
-            doc.setTextColor(150, 150, 150);
-            doc.text('No extracted text available.', margin + 3, y + 5);
-            y += 10;
+            doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(150,150,150);
+            doc.text('No extracted text available.', margin+3, y+5); y += 10;
         } else {
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(9.5);
-            doc.setTextColor(30, 30, 30);
-
-            const lines = doc.splitTextToSize(rawText, usableW - 6);
-            const lineH = 5.2;
-
-            // Draw a light box around the text block
-            const blockH = lines.length * lineH + 6;
-            // We'll draw it after we know actual height — just render line by line
-            lines.forEach(line => {
-                checkPage(lineH + 2);
-                doc.text(line, margin + 3, y);
-                y += lineH;
-            });
+            doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(30,30,30);
+            const lines = doc.splitTextToSize(rawText, usableW-6); const lineH = 5.2;
+            lines.forEach(line => { checkPage(lineH+2); doc.text(line, margin+3, y); y += lineH; });
         }
-
         y += 8;
 
-        // ── FOOTER ───────────────────────────────────────────────────────
         checkPage(12);
-        doc.setDrawColor(200, 200, 200);
-        doc.setLineWidth(0.3);
-        doc.line(margin, y, margin + usableW, y);
-        y += 5;
+        doc.setDrawColor(200,200,200); doc.setLineWidth(0.3); doc.line(margin, y, margin+usableW, y); y += 5;
+        const now = new Date().toLocaleString('en-PH',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
+        doc.setFont('helvetica','italic'); doc.setFontSize(7.5); doc.setTextColor(150,150,150);
+        doc.text('Generated by WMSU Document Management System on '+now, pageW/2, y+4, {align:'center'});
+        doc.text('This is a system-generated soft copy. Text was automatically extracted via OCR.', pageW/2, y+8.5, {align:'center'});
 
-        const now = new Date().toLocaleString('en-PH', {
-            year:'numeric', month:'long', day:'numeric',
-            hour:'2-digit', minute:'2-digit'
-        });
-        doc.setFont('helvetica', 'italic');
-        doc.setFontSize(7.5);
-        doc.setTextColor(150, 150, 150);
-        doc.text('Generated by WMSU Document Management System on ' + now, pageW / 2, y + 4, { align: 'center' });
-        doc.text('This is a system-generated soft copy. Text was automatically extracted via OCR.', pageW / 2, y + 8.5, { align: 'center' });
-
-        // ── Page numbers ─────────────────────────────────────────────────
         const totalPages = doc.internal.getNumberOfPages();
         for (let p = 1; p <= totalPages; p++) {
-            doc.setPage(p);
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(7.5);
-            doc.setTextColor(150, 150, 150);
-            doc.text('Page ' + p + ' of ' + totalPages, pageW - margin, pageH - 12, { align: 'right' });
+            doc.setPage(p); doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(150,150,150);
+            doc.text('Page '+p+' of '+totalPages, pageW-margin, pageH-12, {align:'right'});
         }
-
-        // ── Save ─────────────────────────────────────────────────────────
-        const safeNum  = (currentDocument.number || 'document').replace(/[^a-zA-Z0-9-_]/g, '_');
-        const safeType = (currentDocument.type || 'doc').replace(/\s+/g, '_');
-        doc.save('WMSU_' + safeType + '_' + safeNum + '_softcopy.pdf');
+        const safeNum  = (currentDocument.number || 'document').replace(/[^a-zA-Z0-9-_]/g,'_');
+        const safeType = (currentDocument.type   || 'doc').replace(/\s+/g,'_');
+        doc.save('WMSU_'+safeType+'_'+safeNum+'_softcopy.pdf');
     }
     </script>
 </body>

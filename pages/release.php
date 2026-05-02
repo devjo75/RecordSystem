@@ -348,7 +348,11 @@ function getRecipientsWithFeedback($pdo, $document_type, $document_id) {
     </div>
 
     <script>
-        const BASE_PATH = '/WMSU-Receive-System';
+        const BASE_PATH = <?php
+            $_rl_root = rtrim(str_replace('\\', '/', realpath(__DIR__ . '/..')), '/');
+            $_rl_doc  = rtrim(str_replace('\\', '/', realpath($_SERVER['DOCUMENT_ROOT'])), '/');
+            echo json_encode(str_replace($_rl_doc, '', $_rl_root));
+        ?>;
 
         async function viewRelease(element) {
             // Get the stored document data

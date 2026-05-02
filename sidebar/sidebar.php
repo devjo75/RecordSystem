@@ -4,18 +4,18 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 // BASE PATH (IMPORTANT)
-$base = '/';
+// Dynamically detect the app's subfolder so links work on any host/subdirectory.
+$_app_root = rtrim(str_replace('\\', '/', realpath(__DIR__ . '/..')), '/');
+$_doc_root = rtrim(str_replace('\\', '/', realpath($_SERVER['DOCUMENT_ROOT'])), '/');
+$_rel = str_replace($_doc_root, '', $_app_root);
+$base = rtrim($_rel, '/') . '/';
 
 // Detect current page + folder
 $current_page = basename($_SERVER['PHP_SELF']);
 $current_dir  = basename(dirname($_SERVER['PHP_SELF']));
 
-// Fetch unread inbox count for the current user on every page
-// (inbox.php sets $inbox_unread itself before including sidebar,
-//  so we only query here when it hasn't been set yet)
+// Fetch unread inbox count for the current user
 if (!isset($inbox_unread) && !empty($_SESSION['user_email'])) {
-    // db.php is already loaded by every page that includes this sidebar,
-    // but guard with function_exists just in case
     if (function_exists('getPDO')) {
         try {
             $pdo_sidebar = getPDO();
@@ -50,7 +50,7 @@ function navLink($href, $icon, $label, $matchPage, $matchDir = '') {
     ";
 }
 
-// INBOX NAV LINK — same as navLink() but with an unread badge
+// INBOX NAV LINK
 function inboxNavLink($href, $matchPage) {
     global $current_page, $inbox_unread;
 
@@ -98,7 +98,7 @@ function inboxNavLink($href, $matchPage) {
                 <?= navLink($base . 'pages/receiving.php', 'fa-receipt', 'Receiving', 'receiving.php') ?>
             </li>
 
-            <!-- INBOX (with unread badge) -->
+            <!-- INBOX -->
             <li>
                 <?= inboxNavLink($base . 'pages/inbox.php', 'inbox.php') ?>
             </li>
@@ -108,40 +108,34 @@ function inboxNavLink($href, $matchPage) {
                 <?= navLink($base . 'pages/release.php', 'fa-paper-plane', 'Release', 'release.php') ?>
             </li>
 
-            <!-- ARCHIVE -->
-            <li>
-                <?= navLink($base . 'archive.php', 'fa-archive', 'Archive', 'archive.php') ?>
-            </li>
+            <!-- USER MANAGEMENT -->
+           <?= navLink($base . 'pages/user_management.php', 'fa-users', 'User Management', 'user_management.php') ?>
 
-            <!-- INVENTORY -->
+            <!-- TRASH -->
             <li>
-                <?= navLink('#', 'fa-boxes-stacked', 'Inventory', '') ?>
+                <?= navLink($base . 'pages/trash.php', 'fa-trash-can', 'Trash', 'trash.php') ?>
             </li>
 
         </ul>
-
-    
     </nav>
-    
- 
 
-        <hr class="my-6 border-red-700">
+    <hr class="my-6 border-red-700">
 
-        <!-- USER INFO -->
-        <div class="px-4 py-3 mb-3 bg-red-800 rounded-lg">
-            <p class="text-xs text-red-300 mb-1">Logged in as</p>
-            <p class="text-sm font-semibold truncate">
-                <?= htmlspecialchars($_SESSION['user_email'] ?? 'Unknown') ?>
-            </p>
-            <p class="text-xs text-red-300 capitalize">
-                <?= htmlspecialchars($_SESSION['user_role'] ?? 'viewer') ?>
-            </p>
-        </div>
+    <!-- USER INFO -->
+    <div class="px-4 py-3 mb-3 bg-red-800 rounded-lg">
+        <p class="text-xs text-red-300 mb-1">Logged in as</p>
+        <p class="text-sm font-semibold truncate">
+            <?= htmlspecialchars($_SESSION['user_email'] ?? 'Unknown') ?>
+        </p>
+        <p class="text-xs text-red-300 capitalize">
+            <?= htmlspecialchars($_SESSION['user_role'] ?? 'viewer') ?>
+        </p>
+    </div>
 
-        <!-- LOGOUT -->
-        <a href="<?= $base ?>logout.php" class="flex items-center px-4 py-3 rounded-lg hover:bg-red-800 transition-colors">
-            <span class="mr-3"><i class="fa-solid fa-right-from-bracket"></i></span> Logout
-        </a>
+    <!-- LOGOUT -->
+    <a href="<?= $base ?>logout.php" class="flex items-center px-4 py-3 rounded-lg hover:bg-red-800 transition-colors">
+        <span class="mr-3"><i class="fa-solid fa-right-from-bracket"></i></span> Logout
+    </a>
 </aside>
 
 <!-- FONT AWESOME -->

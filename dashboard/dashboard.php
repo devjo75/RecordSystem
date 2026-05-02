@@ -3,633 +3,628 @@ session_start();
 require_once '../auth-guard/Auth.php';
 require_once '../config/db.php';
 
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header('Location: ../auth-guard/login.php');
+    exit();
+}
+
 $pdo = getPDO();
 
-function mapRoleForReceiver(string $role): string {
-    $map = ['Admin' => 'ADMIN', 'Staff' => 'STAFF', 'Faculty' => 'FACULTY', 'Employee' => 'STAFF'];
-    return $map[$role] ?? 'STAFF';
-}
+// ── Filters ───────────────────────────────────────────────────
+$selected_month = $_GET['month'] ?? '';
+$selected_year  = $_GET['year']  ?? '';
+$filter_type    = $_GET['filter_type'] ?? 'month'; // day, month, year
+$selected_day   = $_GET['day'] ?? '';
 
-function getInitialsFromEmail($email) {
-    if (empty($email)) return 'U';
-    $namePart = explode('@', $email)[0];
-    $parts    = preg_split('/[._-]/', $namePart);
-    $initials = '';
-    foreach ($parts as $part) {
-        if (!empty($part)) $initials .= strtoupper(substr($part, 0, 1));
-        if (strlen($initials) >= 2) break;
+// Build WHERE clause based on filters
+function buildWhere($selected_month, $selected_year, $selected_day, $filter_type) {
+    $conditions = [];
+    
+    if ($filter_type === 'day' && $selected_day && $selected_month && $selected_year) {
+        $conditions[] = "DATE(created_at) = '" . date('Y-m-d', strtotime("$selected_year-$selected_month-$selected_day")) . "'";
+    } elseif ($filter_type === 'month' && $selected_month && $selected_year) {
+        $conditions[] = "MONTH(created_at) = " . intval($selected_month);
+        $conditions[] = "YEAR(created_at) = " . intval($selected_year);
+    } elseif ($filter_type === 'year' && $selected_year) {
+        $conditions[] = "YEAR(created_at) = " . intval($selected_year);
     }
-    return $initials ?: strtoupper(substr($email, 0, 1)) ?: 'U';
+    
+    return empty($conditions) ? '' : 'AND ' . implode(' AND ', $conditions);
 }
 
-$user_email        = $_SESSION['user_email'] ?? '';
-$user_initials     = getInitialsFromEmail($user_email);
-$user_role         = $_SESSION['user_role']  ?? 'user';
-$user_role_display = ucfirst($user_role);
+$where = buildWhere($selected_month, $selected_year, $selected_day, $filter_type);
 
-$success = '';
-$error   = '';
+// ── Stats: Total per document type per status ─────────────────
+try {
+    $stmt = $pdo->prepare("
+        SELECT
+            document_type,
+            status,
+            COUNT(*) AS total
+        FROM document_recipients
+        WHERE 1=1 {$where}
+        GROUP BY document_type, status
+        ORDER BY document_type ASC
+    ");
+    $stmt->execute();
+    $stats = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $stats = [];
+}
 
-// ── ADD ───────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add') {
-    $username   = trim($_POST['username']   ?? '');
-    $email      = trim($_POST['email']      ?? '');
-    $password   = trim($_POST['password']   ?? '');
-    $full_name  = trim($_POST['full_name']  ?? '');
-    $role       = trim($_POST['role']       ?? 'Staff');
-    $department = trim($_POST['department'] ?? '');
-    $position   = trim($_POST['position']   ?? '');
-    $is_active  = ($_POST['is_active'] ?? '0') === '1' ? 1 : 0;
+// Organize into structured array
+$doc_types = [
+    'Memorandum Order' => 'Memorandum Order', 
+    'Special Order' => 'Special Order', 
+    'Travel Order' => 'Travel Order'
+];
+$data = [];
+foreach ($doc_types as $key => $label) {
+    $data[$key] = ['label' => $label, 'pending' => 0, 'received' => 0, 'sent' => 0, 'total' => 0];
+}
+foreach ($stats as $row) {
+    if (isset($data[$row['document_type']])) {
+        $status_key = strtolower($row['status']);
+        if ($status_key === 'pending') {
+            $data[$row['document_type']]['pending'] = (int) $row['total'];
+        } elseif ($status_key === 'received') {
+            $data[$row['document_type']]['received'] = (int) $row['total'];
+        } elseif ($status_key === 'sent') {
+            $data[$row['document_type']]['sent'] = (int) $row['total'];
+        }
+        $data[$row['document_type']]['total'] += (int) $row['total'];
+    }
+}
 
-    if (!$username || !$email || !$password || !$full_name) {
-        $error = 'Please fill in all required fields.';
-    } elseif (!str_ends_with(strtolower($email), '@wmsu.edu.ph')) {
-        $error = 'Only @wmsu.edu.ph email addresses are allowed.';
-    } else {
-        $chk = $pdo->prepare("SELECT id FROM users WHERE email = :e OR username = :u LIMIT 1");
-        $chk->execute([':e' => $email, ':u' => $username]);
-        if ($chk->fetch()) {
-            $error = 'Username or email already exists.';
-        } else {
-            try {
-                $pdo->beginTransaction();
-                $pdo->prepare("
-                    INSERT INTO users (username, email, password_hash, full_name, role, department, position, is_active)
-                    VALUES (:username, :email, :password_hash, :full_name, :role, :department, :position, :is_active)
-                ")->execute([
-                    ':username'      => $username,
-                    ':email'         => $email,
-                    ':password_hash' => password_hash($password, PASSWORD_BCRYPT),
-                    ':full_name'     => $full_name,
-                    ':role'          => $role,
-                    ':department'    => $department,
-                    ':position'      => $position,
-                    ':is_active'     => $is_active,
-                ]);
-                $pdo->prepare("
-                    INSERT INTO receivers (name, department, role, email)
-                    VALUES (:name, :department, :role, :email)
-                ")->execute([
-                    ':name'       => $full_name,
-                    ':department' => $department ?: 'N/A',
-                    ':role'       => mapRoleForReceiver($role),
-                    ':email'      => $email,
-                ]);
-                $pdo->commit();
-                $success = 'User added successfully.';
-            } catch (PDOException $e) {
-                $pdo->rollBack();
-                $error = 'Database error: ' . $e->getMessage();
-            }
+// ── Overall totals ────────────────────────────────────────────
+$total_pending  = array_sum(array_column($data, 'pending'));
+$total_received = array_sum(array_column($data, 'received'));
+$total_sent     = array_sum(array_column($data, 'sent'));
+$total_all      = $total_pending + $total_received + $total_sent;
+
+// ── Trend data based on filter type ───────────────────────────
+$trend_months = [];
+$trend_pending = [];
+$trend_received = [];
+
+if ($filter_type === 'day') {
+    // Get last 30 days trend
+    $trend = $pdo->query("
+        SELECT
+            DATE(created_at) AS date_label,
+            DATE_FORMAT(created_at, '%Y-%m-%d') AS date_key,
+            status,
+            COUNT(*) AS total
+        FROM document_recipients
+        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        GROUP BY date_key, date_label, status
+        ORDER BY date_key ASC
+    ")->fetchAll();
+    
+    $trend_map = [];
+    foreach ($trend as $row) {
+        if (!isset($trend_map[$row['date_key']])) {
+            $trend_map[$row['date_key']] = ['label' => $row['date_label'], 'pending' => 0, 'received' => 0];
+        }
+        $status_key = strtolower($row['status']);
+        if ($status_key === 'pending') {
+            $trend_map[$row['date_key']]['pending'] = (int) $row['total'];
+        } elseif ($status_key === 'received') {
+            $trend_map[$row['date_key']]['received'] = (int) $row['total'];
         }
     }
-}
-
-// ── EDIT ──────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit') {
-    $id         = (int)   ($_POST['id']         ?? 0);
-    $username   = trim($_POST['username']        ?? '');
-    $email      = trim($_POST['email']           ?? '');
-    $full_name  = trim($_POST['full_name']       ?? '');
-    $role       = trim($_POST['role']            ?? 'Staff');
-    $department = trim($_POST['department']      ?? '');
-    $position   = trim($_POST['position']        ?? '');
-    $is_active  = ($_POST['is_active'] ?? '0') === '1' ? 1 : 0;
-    $password   = trim($_POST['password']        ?? '');
-
-    if (!$id || !$username || !$email || !$full_name) {
-        $error = 'Please fill in all required fields.';
-    } elseif (!str_ends_with(strtolower($email), '@wmsu.edu.ph')) {
-        $error = 'Only @wmsu.edu.ph email addresses are allowed.';
-    } else {
-        $chk = $pdo->prepare("SELECT id FROM users WHERE (email=:e OR username=:u) AND id!=:id LIMIT 1");
-        $chk->execute([':e' => $email, ':u' => $username, ':id' => $id]);
-        if ($chk->fetch()) {
-            $error = 'Username or email already used by another user.';
-        } else {
-            try {
-                $pdo->beginTransaction();
-                $old = $pdo->prepare("SELECT email FROM users WHERE id=:id");
-                $old->execute([':id' => $id]);
-                $oldUser = $old->fetch();
-
-                if ($password) {
-                    $pdo->prepare("
-                        UPDATE users SET username=:username, email=:email, password_hash=:pw,
-                            full_name=:full_name, role=:role, department=:department,
-                            position=:position, is_active=:is_active WHERE id=:id
-                    ")->execute([':username'=>$username,':email'=>$email,':pw'=>password_hash($password,PASSWORD_BCRYPT),':full_name'=>$full_name,':role'=>$role,':department'=>$department,':position'=>$position,':is_active'=>$is_active,':id'=>$id]);
-                } else {
-                    $pdo->prepare("
-                        UPDATE users SET username=:username, email=:email,
-                            full_name=:full_name, role=:role, department=:department,
-                            position=:position, is_active=:is_active WHERE id=:id
-                    ")->execute([':username'=>$username,':email'=>$email,':full_name'=>$full_name,':role'=>$role,':department'=>$department,':position'=>$position,':is_active'=>$is_active,':id'=>$id]);
-                }
-
-                if ($oldUser) {
-                    $pdo->prepare("
-                        UPDATE receivers SET name=:name, department=:department, role=:role, email=:email
-                        WHERE email=:old_email
-                    ")->execute([':name'=>$full_name,':department'=>$department?:'N/A',':role'=>mapRoleForReceiver($role),':email'=>$email,':old_email'=>$oldUser['email']]);
-                }
-                $pdo->commit();
-                $success = 'User updated successfully.';
-            } catch (PDOException $e) {
-                $pdo->rollBack();
-                $error = 'Database error: ' . $e->getMessage();
-            }
+    foreach ($trend_map as $entry) {
+        $trend_months[]   = $entry['label'];
+        $trend_pending[]  = $entry['pending'];
+        $trend_received[] = $entry['received'];
+    }
+} elseif ($filter_type === 'month') {
+    // Get last 12 months trend
+    $trend = $pdo->query("
+        SELECT
+            DATE_FORMAT(created_at, '%b %Y') AS month_label,
+            DATE_FORMAT(created_at, '%Y-%m') AS month_key,
+            status,
+            COUNT(*) AS total
+        FROM document_recipients
+        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+        GROUP BY month_key, month_label, status
+        ORDER BY month_key ASC
+    ")->fetchAll();
+    
+    $trend_map = [];
+    foreach ($trend as $row) {
+        if (!isset($trend_map[$row['month_key']])) {
+            $trend_map[$row['month_key']] = ['label' => $row['month_label'], 'pending' => 0, 'received' => 0];
         }
+        $status_key = strtolower($row['status']);
+        if ($status_key === 'pending') {
+            $trend_map[$row['month_key']]['pending'] = (int) $row['total'];
+        } elseif ($status_key === 'received') {
+            $trend_map[$row['month_key']]['received'] = (int) $row['total'];
+        }
+    }
+    foreach ($trend_map as $entry) {
+        $trend_months[]   = $entry['label'];
+        $trend_pending[]  = $entry['pending'];
+        $trend_received[] = $entry['received'];
+    }
+} else {
+    // Get last 5 years trend
+    $trend = $pdo->query("
+        SELECT
+            YEAR(created_at) AS year_label,
+            YEAR(created_at) AS year_key,
+            status,
+            COUNT(*) AS total
+        FROM document_recipients
+        GROUP BY year_key, year_label, status
+        ORDER BY year_key ASC
+        LIMIT 5
+    ")->fetchAll();
+    
+    $trend_map = [];
+    foreach ($trend as $row) {
+        if (!isset($trend_map[$row['year_key']])) {
+            $trend_map[$row['year_key']] = ['label' => $row['year_label'], 'pending' => 0, 'received' => 0];
+        }
+        $status_key = strtolower($row['status']);
+        if ($status_key === 'pending') {
+            $trend_map[$row['year_key']]['pending'] = (int) $row['total'];
+        } elseif ($status_key === 'received') {
+            $trend_map[$row['year_key']]['received'] = (int) $row['total'];
+        }
+    }
+    foreach ($trend_map as $entry) {
+        $trend_months[]   = $entry['label'];
+        $trend_pending[]  = $entry['pending'];
+        $trend_received[] = $entry['received'];
     }
 }
 
-// ── DELETE ────────────────────────────────────────────────────
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete') {
-    $id = (int) ($_POST['id'] ?? 0);
-    if (!$id) {
-        $error = 'Invalid user.';
-    } else {
-        try {
-            $pdo->beginTransaction();
-            $sel = $pdo->prepare("SELECT email FROM users WHERE id=:id");
-            $sel->execute([':id' => $id]);
-            $user = $sel->fetch();
-            $pdo->prepare("DELETE FROM users WHERE id=:id")->execute([':id' => $id]);
-            if ($user) {
-                $pdo->prepare("DELETE FROM receivers WHERE email=:email")->execute([':email' => $user['email']]);
-            }
-            $pdo->commit();
-            $success = 'User deleted successfully.';
-        } catch (PDOException $e) {
-            $pdo->rollBack();
-            $error = 'Database error: ' . $e->getMessage();
-        }
+// ── Available years for filter ────────────────────────────────
+$years = $pdo->query("
+    SELECT DISTINCT YEAR(created_at) AS yr
+    FROM document_recipients
+    ORDER BY yr DESC
+")->fetchAll(PDO::FETCH_COLUMN);
+if (empty($years)) $years = [date('Y')];
+
+$months_list = [
+    1=>'January',2=>'February',3=>'March',4=>'April',
+    5=>'May',6=>'June',7=>'July',8=>'August',
+    9=>'September',10=>'October',11=>'November',12=>'December',
+];
+
+// Days in month
+$days_in_month = ($selected_month && $selected_year) ? cal_days_in_month(CAL_GREGORIAN, $selected_month, $selected_year) : 31;
+
+// Most received document type
+$most_received = '';
+$max_received  = -1;
+foreach ($data as $key => $d) {
+    if ($d['received'] > $max_received) {
+        $max_received  = $d['received'];
+        $most_received = $d['label'];
     }
 }
 
-$users = $pdo->query("
-    SELECT id, username, email, full_name, role, department, position, is_active, created_at
-    FROM users ORDER BY created_at DESC
-")->fetchAll();
+// Get recent document activity
+$recent_activity = $pdo->query("
+    SELECT 
+        dr.document_type,
+        dr.recipient_name,
+        dr.recipient_email,
+        dr.status,
+        dr.received_at,
+        dr.created_at
+    FROM document_recipients dr
+    ORDER BY dr.created_at DESC
+    LIMIT 10
+")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard — WMSU Document Management</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>Reports — WMSU Document Management</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        crimson: {
-                            950:'#4D0001',900:'#800002',800:'#AA0003',
-                            700:'#D91619',600:'#FF3336',500:'#FF4D50',
-                            400:'#FF666A',300:'#FF8083',200:'#FF999D',
-                            100:'#FFB3B6',50:'#FFCCCE',
-                        }
-                    },
-                    fontFamily: {
-                        'main':      ['"Noto Nastaliq Urdu"','serif'],
-                        'secondary': ['"IBM Plex Sans"','sans-serif'],
-                    }
-                }
-            }
-        }
-    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family:'IBM Plex Sans',sans-serif; }
-        h1,h2,h3,h4,h5,h6 { font-family:'Noto Nastaliq Urdu',serif; }
+        body { font-family: 'IBM Plex Sans', sans-serif; }
     </style>
 </head>
 <body class="bg-gray-100">
+<div class="flex">
 
-    <?php $active_page = 'dashboard'; include __DIR__ . '/../sidebar/sidebar.php'; ?>
+    <?php
+        $active_page = 'reports';
+        include __DIR__ . '/../sidebar/sidebar.php';
+    ?>
 
-    <main class="lg:ml-64 min-h-screen">
+    <main class="flex-1 lg:ml-64 min-h-screen p-6">
 
-        <!-- Top Bar -->
-        <header class="bg-white shadow-sm sticky top-0 z-20">
-            <div class="px-4 sm:px-6 lg:px-8 py-4">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-3 min-w-0">
-                        <button id="burgerBtn" class="lg:hidden flex flex-col justify-center items-center w-10 h-10 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0" aria-label="Toggle menu">
-                            <span class="block w-5 h-0.5 bg-gray-700 mb-1 rounded"></span>
-                            <span class="block w-5 h-0.5 bg-gray-700 mb-1 rounded"></span>
-                            <span class="block w-5 h-0.5 bg-gray-700 rounded"></span>
-                        </button>
-                        <div class="min-w-0">
-                            <h2 class="text-xl sm:text-2xl font-bold text-gray-800 font-main truncate">Dashboard</h2>
-                            <p class="hidden sm:block text-sm text-gray-600 mt-1 font-secondary">User management &amp; account overview</p>
-                        </div>
-                    </div>
-                    <div class="flex items-center space-x-4">
-                        <button class="relative p-2 text-gray-600 hover:text-crimson-700 transition duration-200">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
-                            </svg>
-                            <span class="absolute top-1 right-1 w-2 h-2 bg-crimson-600 rounded-full"></span>
-                        </button>
-                        <div class="flex items-center space-x-3">
-                            <div class="hidden sm:block text-right">
-                                <p class="text-sm font-semibold text-gray-800 font-secondary"><?= htmlspecialchars($user_email ?: 'Guest User') ?></p>
-                                <p class="text-xs text-gray-600 font-secondary"><?= htmlspecialchars($user_role_display) ?></p>
-                            </div>
-                            <div class="w-10 h-10 bg-crimson-700 rounded-full flex items-center justify-center">
-                                <span class="text-white font-semibold font-secondary"><?= htmlspecialchars($user_initials) ?></span>
-                            </div>
-                        </div>
-                    </div>
+        <!-- Header -->
+        <div class="mb-6">
+            <h1 class="text-2xl font-bold text-gray-800">Document Reports</h1>
+            <p class="text-gray-500 text-sm mt-1">Overview of document activity by type and status</p>
+        </div>
+
+        <!-- Filters -->
+        <form method="GET" class="bg-white rounded-xl shadow p-4 mb-6">
+            <div class="flex flex-wrap items-end gap-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Filter By</label>
+                    <select name="filter_type" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" onchange="this.form.submit()">
+                        <option value="month" <?= $filter_type == 'month' ? 'selected' : '' ?>>Monthly</option>
+                        <option value="year" <?= $filter_type == 'year' ? 'selected' : '' ?>>Yearly</option>
+                        <option value="day" <?= $filter_type == 'day' ? 'selected' : '' ?>>Daily</option>
+                    </select>
                 </div>
-            </div>
-        </header>
-
-        <!-- Page Content -->
-        <div class="px-4 sm:px-6 lg:px-8 py-8">
-
-            <?php if ($success): ?>
-            <div class="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-lg text-sm font-secondary flex justify-between items-center">
-                <?= htmlspecialchars($success) ?>
-                <button onclick="this.parentElement.remove()" class="font-bold text-green-500 hover:text-green-700 ml-4">&times;</button>
-            </div>
-            <?php endif; ?>
-
-            <?php if ($error): ?>
-            <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm font-secondary flex justify-between items-center">
-                <?= htmlspecialchars($error) ?>
-                <button onclick="this.parentElement.remove()" class="font-bold text-red-500 hover:text-red-700 ml-4">&times;</button>
-            </div>
-            <?php endif; ?>
-
-            <div class="bg-white rounded-2xl shadow p-6">
-                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-                    <div>
-                        <h3 class="text-xl font-bold text-gray-800 font-main">User Accounts</h3>
-                        <p class="text-sm text-gray-500 font-secondary mt-1"><?= count($users) ?> users registered</p>
-                    </div>
-                    <div class="flex items-center gap-2 w-full sm:w-auto">
-                        <input type="text" id="searchInput" placeholder="Search users..." oninput="filterTable()"
-                            class="flex-1 sm:w-52 px-4 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition duration-200 font-secondary">
-                        <button onclick="openModal('addModal')"
-                            class="flex-shrink-0 bg-crimson-700 hover:bg-crimson-800 text-white px-4 py-2 rounded-lg transition duration-200 text-sm font-semibold font-secondary">
-                            + Add User
-                        </button>
-                    </div>
-                </div>
-
-                <div class="overflow-x-auto">
-                    <table class="w-full text-sm min-w-[700px]" id="usersTable">
-                        <thead class="text-gray-400 uppercase text-xs border-b font-secondary">
-                            <tr>
-                                <th class="py-3 text-left">#</th>
-                                <th class="py-3 text-left">Full Name</th>
-                                <th class="py-3 text-left">Email</th>
-                                <th class="py-3 text-left">Role</th>
-                                <th class="py-3 text-left">Department</th>
-                                <th class="py-3 text-left">Status</th>
-                                <th class="py-3 text-left">Date Created</th>
-                                <th class="py-3 text-center">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody class="text-gray-600 divide-y divide-gray-100 font-secondary" id="usersTableBody">
-                            <?php foreach ($users as $i => $u): ?>
-                            <tr class="hover:bg-gray-50 user-row<?= $i >= 5 ? ' table-extra-row hidden' : '' ?>"
-                                data-search="<?= strtolower(htmlspecialchars($u['full_name'] . ' ' . $u['email'] . ' ' . ($u['department'] ?? ''))) ?>">
-                                <td class="py-3 text-gray-400"><?= $i + 1 ?></td>
-                                <td class="py-3">
-                                    <div class="flex items-center gap-2">
-                                        <div class="w-8 h-8 rounded-full bg-crimson-100 text-crimson-700 flex items-center justify-center font-bold text-sm shrink-0">
-                                            <?= strtoupper($u['full_name'][0] ?? '?') ?>
-                                        </div>
-                                        <div>
-                                            <p class="font-semibold text-gray-800 leading-tight"><?= htmlspecialchars($u['full_name']) ?></p>
-                                            <p class="text-xs text-gray-400">@<?= htmlspecialchars($u['username']) ?></p>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3"><?= htmlspecialchars($u['email']) ?></td>
-                                <td class="py-3">
-                                    <?php
-                                    $rc = ['Admin'=>'bg-crimson-100 text-crimson-700','Staff'=>'bg-blue-100 text-blue-600','Faculty'=>'bg-purple-100 text-purple-600','Employee'=>'bg-amber-100 text-amber-700'][$u['role']] ?? 'bg-gray-100 text-gray-600';
-                                    ?>
-                                    <span class="px-2 py-1 text-xs rounded-full font-semibold <?= $rc ?>"><?= htmlspecialchars($u['role']) ?></span>
-                                </td>
-                                <td class="py-3 text-gray-500"><?= htmlspecialchars($u['department'] ?? '—') ?></td>
-                                <td class="py-3">
-                                    <span class="px-2 py-1 text-xs rounded-full font-semibold <?= $u['is_active'] ? 'bg-green-100 text-green-600' : 'bg-gray-200 text-gray-500' ?>">
-                                        <?= $u['is_active'] ? 'Active' : 'Inactive' ?>
-                                    </span>
-                                </td>
-                                <td class="py-3 text-gray-400 text-xs"><?= date('M d, Y', strtotime($u['created_at'])) ?></td>
-                                <td class="py-3">
-                                    <div class="flex items-center justify-center gap-2">
-                                        <button onclick="openEditModal(<?= $u['id'] ?>,'<?= htmlspecialchars($u['username'],ENT_QUOTES) ?>','<?= htmlspecialchars($u['email'],ENT_QUOTES) ?>','<?= htmlspecialchars($u['full_name'],ENT_QUOTES) ?>','<?= htmlspecialchars($u['role'],ENT_QUOTES) ?>','<?= htmlspecialchars($u['department']??'',ENT_QUOTES) ?>','<?= htmlspecialchars($u['position']??'',ENT_QUOTES) ?>',<?= $u['is_active'] ? 'true':'false' ?>)"
-                                            class="px-3 py-1.5 text-xs font-semibold bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition font-secondary">Edit</button>
-                                        <button onclick="openDeleteModal(<?= $u['id'] ?>,'<?= htmlspecialchars($u['full_name'],ENT_QUOTES) ?>')"
-                                            class="px-3 py-1.5 text-xs font-semibold bg-crimson-50 text-crimson-700 hover:bg-crimson-100 rounded-lg transition font-secondary">Delete</button>
-                                    </div>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                            <?php if (empty($users)): ?>
-                            <tr><td colspan="8" class="py-10 text-center text-gray-400 font-secondary">No users found.</td></tr>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                    <p id="noResults" class="hidden text-center py-8 text-gray-400 text-sm font-secondary">No users match your search.</p>
-                </div>
-                <!-- Expand/Collapse Table Button -->
-                <?php if (count($users) > 5): ?>
-                <div class="mt-4 text-center">
-                    <button id="tableToggleBtn" onclick="toggleTableRows()" class="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-crimson-700 border-2 border-crimson-200 rounded-lg hover:bg-crimson-50 transition font-secondary">
-                        <span id="tableToggleLabel">Show all <?= count($users) ?> users</span>
-                        <svg id="tableToggleIcon" class="w-4 h-4 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                        </svg>
-                    </button>
+                
+                <?php if ($filter_type == 'day'): ?>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Day</label>
+                    <select name="day" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400">
+                        <option value="">Select Day</option>
+                        <?php for($d = 1; $d <= $days_in_month; $d++): ?>
+                        <option value="<?= $d ?>" <?= $selected_day == $d ? 'selected' : '' ?>>
+                            <?= $d ?>
+                        </option>
+                        <?php endfor; ?>
+                    </select>
                 </div>
                 <?php endif; ?>
-            </div>
-        </div>
-    </main>
-
-<!-- ══════ ADD MODAL ══════ -->
-<div id="addModal" class="fixed inset-0 bg-black bg-opacity-40 hidden items-center justify-center z-50">
-    <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-        <div class="bg-crimson-700 text-white px-6 py-5 flex justify-between items-center">
-            <div>
-                <h2 class="font-bold text-lg font-main">Add New User</h2>
-                <p class="text-sm text-crimson-100 font-secondary">Fill in the details below</p>
-            </div>
-            <button onclick="closeModal('addModal')" class="text-2xl leading-none hover:opacity-75">&times;</button>
-        </div>
-        <form method="POST">
-            <input type="hidden" name="action" value="add">
-            <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Username <span class="text-crimson-600">*</span></label>
-                        <input type="text" name="username" required placeholder="e.g. jdelacruz"
-                            class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Full Name <span class="text-crimson-600">*</span></label>
-                        <input type="text" name="full_name" required placeholder="e.g. Juan dela Cruz"
-                            class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                    </div>
-                </div>
+                
+                <?php if ($filter_type != 'year'): ?>
                 <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Email <span class="text-crimson-600">*</span></label>
-                    <input type="email" name="email" id="addEmail" required placeholder="user@wmsu.edu.ph"
-                        pattern="[a-zA-Z0-9._%+\-]+@wmsu\.edu\.ph"
-                        title="Only @wmsu.edu.ph email addresses are allowed"
-                        oninput="validateWmsuEmail(this,'addEmailHint')"
-                        class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                    <p id="addEmailHint" class="mt-1 text-xs text-gray-400 font-secondary hidden">Must end with <span class="font-semibold">@wmsu.edu.ph</span></p>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Month</label>
+                    <select name="month" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400">
+                        <option value="">All Months</option>
+                        <?php foreach ($months_list as $num => $name): ?>
+                        <option value="<?= $num ?>" <?= $selected_month == $num ? 'selected' : '' ?>>
+                            <?= $name ?>
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
+                <?php endif; ?>
+                
                 <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Password <span class="text-crimson-600">*</span></label>
-                    <input type="password" name="password" required
-                        class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">Year</label>
+                    <select name="year" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400">
+                        <option value="">All Years</option>
+                        <?php foreach ($years as $yr): ?>
+                        <option value="<?= $yr ?>" <?= $selected_year == $yr ? 'selected' : '' ?>>
+                            <?= $yr ?>
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Role <span class="text-crimson-600">*</span></label>
-                        <select name="role" class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                            <option value="Staff">Staff</option>
-                            <option value="Admin">Admin</option>
-                            <option value="Faculty">Faculty</option>
-                            <option value="Employee">Employee</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Status</label>
-                        <select name="is_active" class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                            <option value="1">Active</option>
-                            <option value="0">Inactive</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Department</label>
-                        <input type="text" name="department" placeholder="e.g. IT Department"
-                            class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Position</label>
-                        <input type="text" name="position" placeholder="e.g. System Admin"
-                            class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                    </div>
-                </div>
-            </div>
-            <div class="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
-                <button type="button" onclick="closeModal('addModal')"
-                    class="px-4 py-2 rounded-lg border-2 border-gray-200 text-gray-600 hover:bg-gray-100 text-sm font-secondary font-semibold">Cancel</button>
+                
                 <button type="submit"
-                    class="px-4 py-2 rounded-lg bg-crimson-700 text-white hover:bg-crimson-800 text-sm font-semibold font-secondary transition duration-200">Add User</button>
+                    class="px-4 py-2 bg-red-700 text-white rounded-lg text-sm font-medium hover:bg-red-800 transition">
+                    Apply Filter
+                </button>
+                <?php if ($selected_month || $selected_year || $selected_day): ?>
+                <a href="reports.php"
+                    class="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition">
+                    Clear
+                </a>
+                <?php endif; ?>
             </div>
         </form>
-    </div>
-</div>
 
-<!-- ══════ EDIT MODAL ══════ -->
-<div id="editModal" class="fixed inset-0 bg-black bg-opacity-40 hidden items-center justify-center z-50">
-    <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-        <div class="bg-gray-800 text-white px-6 py-5 flex justify-between items-center">
-            <div>
-                <h2 class="font-bold text-lg font-main">Edit User</h2>
-                <p class="text-sm text-gray-300 font-secondary">Update user details</p>
+        <!-- Summary Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
+            <div class="bg-white rounded-xl shadow p-5 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-400 font-medium">Total Documents</p>
+                    <p class="text-2xl font-bold text-gray-800"><?= $total_all ?></p>
+                </div>
             </div>
-            <button onclick="closeModal('editModal')" class="text-2xl leading-none hover:opacity-75">&times;</button>
+
+            <div class="bg-white rounded-xl shadow p-5 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-full bg-yellow-100 flex items-center justify-center shrink-0">
+                    <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-400 font-medium">Pending</p>
+                    <p class="text-2xl font-bold text-yellow-600"><?= $total_pending ?></p>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow p-5 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
+                    <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-400 font-medium">Sent</p>
+                    <p class="text-2xl font-bold text-purple-600"><?= $total_sent ?></p>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow p-5 flex items-center gap-4">
+                <div class="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center shrink-0">
+                    <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-400 font-medium">Received</p>
+                    <p class="text-2xl font-bold text-green-600"><?= $total_received ?></p>
+                </div>
+            </div>
         </div>
-        <form method="POST">
-            <input type="hidden" name="action" value="edit">
-            <input type="hidden" name="id" id="editId">
-            <div class="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Username <span class="text-crimson-600">*</span></label>
-                        <input type="text" name="username" id="editUsername" required
-                            class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Full Name <span class="text-crimson-600">*</span></label>
-                        <input type="text" name="full_name" id="editFullName" required
-                            class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Email <span class="text-crimson-600">*</span></label>
-                    <input type="email" name="email" id="editEmail" required
-                        pattern="[a-zA-Z0-9._%+\-]+@wmsu\.edu\.ph"
-                        title="Only @wmsu.edu.ph email addresses are allowed"
-                        oninput="validateWmsuEmail(this,'editEmailHint')"
-                        class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                    <p id="editEmailHint" class="mt-1 text-xs text-gray-400 font-secondary hidden">Must end with <span class="font-semibold">@wmsu.edu.ph</span></p>
-                </div>
-                <div>
-                    <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">New Password <span class="text-gray-400 font-normal text-xs">(leave blank to keep current)</span></label>
-                    <input type="password" name="password" id="editPassword" placeholder="••••••••"
-                        class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Role <span class="text-crimson-600">*</span></label>
-                        <select name="role" id="editRole" class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                            <option value="Staff">Staff</option>
-                            <option value="Admin">Admin</option>
-                            <option value="Faculty">Faculty</option>
-                            <option value="Employee">Employee</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Status</label>
-                        <select name="is_active" id="editStatus" class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                            <option value="1">Active</option>
-                            <option value="0">Inactive</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Department</label>
-                        <input type="text" name="department" id="editDepartment"
-                            class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-semibold text-gray-700 mb-1 font-secondary">Position</label>
-                        <input type="text" name="position" id="editPosition"
-                            class="w-full border-2 border-gray-200 px-3 py-2.5 rounded-lg text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 transition font-secondary">
-                    </div>
-                </div>
-            </div>
-            <div class="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
-                <button type="button" onclick="closeModal('editModal')"
-                    class="px-4 py-2 rounded-lg border-2 border-gray-200 text-gray-600 hover:bg-gray-100 text-sm font-secondary font-semibold">Cancel</button>
-                <button type="submit"
-                    class="px-4 py-2 rounded-lg bg-gray-800 text-white hover:bg-gray-900 text-sm font-semibold font-secondary transition duration-200">Save Changes</button>
-            </div>
-        </form>
-    </div>
-</div>
 
-<!-- ══════ DELETE MODAL ══════ -->
-<div id="deleteModal" class="fixed inset-0 bg-black bg-opacity-40 hidden items-center justify-center z-50">
-    <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-8 text-center">
-        <div class="w-14 h-14 bg-crimson-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg class="w-7 h-7 text-crimson-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+        <!-- Most Received Badge -->
+        <?php if ($most_received && $max_received > 0): ?>
+        <div class="bg-green-50 border border-green-200 rounded-xl px-5 py-3 mb-6 flex items-center gap-3">
+            <svg class="w-5 h-5 text-green-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
             </svg>
+            <p class="text-sm text-green-700">
+                <span class="font-semibold">Most Received Document:</span>
+                <?= htmlspecialchars($most_received) ?> with <?= $max_received ?> received document(s)
+            </p>
         </div>
-        <h3 class="text-lg font-bold text-gray-800 mb-1 font-main">Delete User</h3>
-        <p class="text-sm text-gray-500 mb-1 font-secondary">Are you sure you want to delete</p>
-        <p class="font-semibold text-gray-800 mb-1 font-secondary" id="deleteUserName"></p>
-        <p class="text-xs text-crimson-600 mb-6 font-secondary">This will also remove them from the receivers list.</p>
-        <form method="POST">
-            <input type="hidden" name="action" value="delete">
-            <input type="hidden" name="id" id="deleteId">
-            <div class="flex gap-3 justify-center">
-                <button type="button" onclick="closeModal('deleteModal')"
-                    class="px-5 py-2 rounded-lg border-2 border-gray-200 text-gray-600 hover:bg-gray-100 text-sm font-secondary font-semibold">Cancel</button>
-                <button type="submit"
-                    class="px-5 py-2 rounded-lg bg-crimson-700 text-white hover:bg-crimson-800 text-sm font-semibold font-secondary transition duration-200">Yes, Delete</button>
+        <?php endif; ?>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <!-- Bar Chart: Per Document Type -->
+            <div class="bg-white rounded-xl shadow p-6">
+                <h2 class="font-semibold text-gray-700 mb-1">Documents by Type</h2>
+                <p class="text-xs text-gray-400 mb-4">Document status distribution</p>
+                <canvas id="typeChart" height="220"></canvas>
             </div>
-        </form>
-    </div>
+
+            <!-- Bar Chart: Trend -->
+            <div class="bg-white rounded-xl shadow p-6">
+                <h2 class="font-semibold text-gray-700 mb-1">
+                    <?= $filter_type == 'day' ? 'Daily' : ($filter_type == 'year' ? 'Yearly' : 'Monthly') ?> Trend
+                </h2>
+                <p class="text-xs text-gray-400 mb-4">Pending vs Received over time</p>
+                <canvas id="trendChart" height="220"></canvas>
+            </div>
+        </div>
+
+        <!-- Summary Table -->
+        <div class="bg-white rounded-xl shadow p-6 mb-6">
+            <h2 class="font-semibold text-gray-700 mb-4">Detailed Breakdown</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-xs text-gray-400 uppercase border-b">
+                            <th class="py-3 text-left">Document Type</th>
+                            <th class="py-3 text-center">Pending</th>
+                            <th class="py-3 text-center">Sent</th>
+                            <th class="py-3 text-center">Received</th>
+                            <th class="py-3 text-center">Total</th>
+                            <th class="py-3 text-left">Receive Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        <?php foreach ($data as $key => $d):
+                            $rate = $d['total'] > 0 ? round(($d['received'] / $d['total']) * 100) : 0;
+                        ?>
+                        <tr class="hover:bg-gray-50">
+                            <td class="py-3 font-medium text-gray-800"><?= htmlspecialchars($d['label']) ?></td>
+                            <td class="py-3 text-center">
+                                <span class="px-2 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs font-semibold">
+                                    <?= $d['pending'] ?>
+                                </span>
+                            </td>
+                            <td class="py-3 text-center">
+                                <span class="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold">
+                                    <?= $d['sent'] ?>
+                                </span>
+                            </td>
+                            <td class="py-3 text-center">
+                                <span class="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
+                                    <?= $d['received'] ?>
+                                </span>
+                            </td>
+                            <td class="py-3 text-center font-semibold text-gray-700"><?= $d['total'] ?></td>
+                            <td class="py-3">
+                                <div class="flex items-center gap-2">
+                                    <div class="flex-1 bg-gray-200 rounded-full h-2">
+                                        <div class="bg-green-500 h-2 rounded-full transition-all"
+                                             style="width: <?= $rate ?>%"></div>
+                                    </div>
+                                    <span class="text-xs text-gray-500 w-10 text-right"><?= $rate ?>%</span>
+                                </div>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+
+                        <!-- Totals row -->
+                        <tr class="bg-gray-50 font-semibold">
+                            <td class="py-3 text-gray-700">Total</td>
+                            <td class="py-3 text-center text-yellow-700"><?= $total_pending ?></td>
+                            <td class="py-3 text-center text-purple-700"><?= $total_sent ?></td>
+                            <td class="py-3 text-center text-green-700"><?= $total_received ?></td>
+                            <td class="py-3 text-center text-gray-800"><?= $total_all ?></td>
+                            <td class="py-3">
+                                <?php $overall_rate = $total_all > 0 ? round(($total_received / $total_all) * 100) : 0; ?>
+                                <div class="flex items-center gap-2">
+                                    <div class="flex-1 bg-gray-200 rounded-full h-2">
+                                        <div class="bg-green-500 h-2 rounded-full" style="width: <?= $overall_rate ?>%"></div>
+                                    </div>
+                                    <span class="text-xs text-gray-500 w-10 text-right"><?= $overall_rate ?>%</span>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="bg-white rounded-xl shadow p-6">
+            <h2 class="font-semibold text-gray-700 mb-4">Recent Document Activity</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-xs text-gray-400 uppercase border-b">
+                            <th class="py-3 text-left">Document Type</th>
+                            <th class="py-3 text-left">Recipient</th>
+                            <th class="py-3 text-left">Email</th>
+                            <th class="py-3 text-center">Status</th>
+                            <th class="py-3 text-left">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        <?php if (empty($recent_activity)): ?>
+                        <tr>
+                            <td colspan="5" class="py-4 text-center text-gray-500">No activity found</td>
+                        </tr>
+                        <?php else: ?>
+                        <?php foreach ($recent_activity as $activity): ?>
+                        <tr class="hover:bg-gray-50">
+                            <td class="py-3 text-gray-700"><?= htmlspecialchars($activity['document_type']) ?></td>
+                            <td class="py-3 text-gray-700"><?= htmlspecialchars($activity['recipient_name']) ?></td>
+                            <td class="py-3 text-gray-500 text-xs"><?= htmlspecialchars($activity['recipient_email']) ?></td>
+                            <td class="py-3 text-center">
+                                <?php
+                                $status_color = [
+                                    'pending' => 'yellow',
+                                    'sent' => 'purple',
+                                    'received' => 'green',
+                                    'failed' => 'red'
+                                ];
+                                $color = $status_color[strtolower($activity['status'])] ?? 'gray';
+                                ?>
+                                <span class="px-2 py-1 bg-<?= $color ?>-100 text-<?= $color ?>-700 rounded-full text-xs font-semibold">
+                                    <?= htmlspecialchars($activity['status']) ?>
+                                </span>
+                            </td>
+                            <td class="py-3 text-gray-500 text-xs">
+                                <?= date('M d, Y H:i', strtotime($activity['created_at'])) ?>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
 </div>
 
 <script>
-function validateWmsuEmail(input, hintId) {
-    const hint  = document.getElementById(hintId);
-    const valid = input.value.toLowerCase().endsWith('@wmsu.edu.ph');
-    if (input.value === '') {
-        input.classList.remove('border-crimson-500', 'border-green-500');
-        hint.classList.add('hidden');
-    } else if (valid) {
-        input.classList.remove('border-crimson-500');
-        input.classList.add('border-green-500');
-        hint.classList.add('hidden');
-    } else {
-        input.classList.remove('border-green-500');
-        input.classList.add('border-crimson-500');
-        hint.classList.remove('hidden');
+// ── Chart.js defaults ─────────────────────────────────────────
+Chart.defaults.font.family = "'IBM Plex Sans', sans-serif";
+Chart.defaults.color = '#6B7280';
+
+// ── Bar Chart: Per Document Type ──────────────────────────────
+const typeCtx = document.getElementById('typeChart').getContext('2d');
+new Chart(typeCtx, {
+    type: 'bar',
+    data: {
+        labels: <?= json_encode(array_column($data, 'label')) ?>,
+        datasets: [
+            {
+                label: 'Pending',
+                data: <?= json_encode(array_column($data, 'pending')) ?>,
+                backgroundColor: 'rgba(251, 191, 36, 0.8)',
+                borderColor: 'rgba(251, 191, 36, 1)',
+                borderWidth: 1,
+                borderRadius: 6,
+            },
+            {
+                label: 'Sent',
+                data: <?= json_encode(array_column($data, 'sent')) ?>,
+                backgroundColor: 'rgba(139, 92, 246, 0.8)',
+                borderColor: 'rgba(139, 92, 246, 1)',
+                borderWidth: 1,
+                borderRadius: 6,
+            },
+            {
+                label: 'Received',
+                data: <?= json_encode(array_column($data, 'received')) ?>,
+                backgroundColor: 'rgba(34, 197, 94, 0.8)',
+                borderColor: 'rgba(34, 197, 94, 1)',
+                borderWidth: 1,
+                borderRadius: 6,
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+            legend: { position: 'top' },
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: { stepSize: 1, precision: 0 },
+                grid: { color: 'rgba(0,0,0,0.05)' }
+            },
+            x: {
+                grid: { display: false }
+            }
+        }
     }
-}
-</script>
-
-<script>
-function openModal(id) { document.getElementById(id).classList.remove('hidden'); document.getElementById(id).classList.add('flex'); }
-function closeModal(id) { document.getElementById(id).classList.add('hidden'); document.getElementById(id).classList.remove('flex'); }
-
-['addModal','editModal','deleteModal'].forEach(id => {
-    document.getElementById(id).addEventListener('click', function(e) { if (e.target === this) closeModal(id); });
 });
 
-function openEditModal(id, username, email, fullName, role, dept, position, isActive) {
-    document.getElementById('editId').value         = id;
-    document.getElementById('editUsername').value   = username;
-    document.getElementById('editEmail').value      = email;
-    document.getElementById('editFullName').value   = fullName;
-    document.getElementById('editPassword').value   = '';
-    document.getElementById('editDepartment').value = dept;
-    document.getElementById('editPosition').value   = position;
-    const roleEl = document.getElementById('editRole');
-    for (let o of roleEl.options) o.selected = o.value === role;
-    const statusEl = document.getElementById('editStatus');
-    for (let o of statusEl.options) o.selected = o.value === (isActive ? '1' : '0');
-    openModal('editModal');
-}
-
-function openDeleteModal(id, name) {
-    document.getElementById('deleteId').value             = id;
-    document.getElementById('deleteUserName').textContent = name;
-    openModal('deleteModal');
-}
-
-function filterTable() {
-    const q = document.getElementById('searchInput').value.toLowerCase();
-    const rows = document.querySelectorAll('.user-row');
-    let visible = 0;
-    const isSearching = q.length > 0;
-    rows.forEach(row => {
-        const match = row.dataset.search.includes(q);
-        // When searching: show all matching rows regardless of expand state
-        // When not searching: respect the tableExpanded state for extra rows
-        if (isSearching) {
-            row.classList.toggle('hidden', !match);
-        } else {
-            const isExtra = row.classList.contains('table-extra-row');
-            row.classList.toggle('hidden', !match || (isExtra && !tableExpanded));
+// ── Bar Chart: Trend ──────────────────────────────────
+const trendCtx = document.getElementById('trendChart').getContext('2d');
+new Chart(trendCtx, {
+    type: 'bar',
+    data: {
+        labels: <?= json_encode($trend_months) ?>,
+        datasets: [
+            {
+                label: 'Pending',
+                data: <?= json_encode($trend_pending) ?>,
+                backgroundColor: 'rgba(251, 191, 36, 0.8)',
+                borderColor: 'rgba(251, 191, 36, 1)',
+                borderWidth: 1,
+                borderRadius: 6,
+            },
+            {
+                label: 'Received',
+                data: <?= json_encode($trend_received) ?>,
+                backgroundColor: 'rgba(34, 197, 94, 0.8)',
+                borderColor: 'rgba(34, 197, 94, 1)',
+                borderWidth: 1,
+                borderRadius: 6,
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+            legend: { position: 'top' },
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: { stepSize: 1, precision: 0 },
+                grid: { color: 'rgba(0,0,0,0.05)' }
+            },
+            x: {
+                grid: { display: false }
+            }
         }
-        if (match && !row.classList.contains('hidden')) visible++;
-    });
-    document.getElementById('noResults').classList.toggle('hidden', visible > 0);
-    // Update toggle button visibility
-    const toggleBtn = document.getElementById('tableToggleBtn');
-    if (toggleBtn) toggleBtn.classList.toggle('hidden', isSearching);
-}
+    }
+});
 </script>
-<script>
-// Table expand/collapse
-let tableExpanded = false;
-function toggleTableRows() {
-    tableExpanded = !tableExpanded;
-    document.querySelectorAll('.table-extra-row').forEach(row => {
-        row.classList.toggle('hidden', !tableExpanded);
-    });
-    const label = document.getElementById('tableToggleLabel');
-    const icon  = document.getElementById('tableToggleIcon');
-    if (label) label.textContent = tableExpanded ? 'Collapse table' : 'Show all <?= count($users) ?> users';
-    if (icon)  icon.style.transform = tableExpanded ? 'rotate(180deg)' : '';
-}
-</script>
-<script src="../js/sidebar.js"></script>
+
 </body>
 </html>

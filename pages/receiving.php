@@ -274,6 +274,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 
                 // Save files to document_files table
+                // NOTE: document_files.document_type must use the lowercase_underscored form
+                // that inbox.php's JOIN produces via LOWER(REPLACE('Memorandum Order',' ','_'))
+                // i.e. 'memorandum_order', 'special_order', 'travel_order'
+                $document_type_file_map = [
+                    'memorandum'    => 'memorandum_order',
+                    'special_order' => 'special_order',
+                    'travel_order'  => 'travel_order',
+                ];
+                $document_type_for_files = $document_type_file_map[$document_type] ?? $document_type;
                 if (!empty($saved_files)) {
                     $file_stmt = $pdo->prepare("
                         INSERT INTO document_files 
@@ -283,7 +292,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     foreach ($saved_files as $f) {
                         $file_stmt->execute([
-                            $document_type,
+                            $document_type_for_files,
                             $document_id,
                             $f['original_name'],
                             $f['stored_name'],
@@ -330,7 +339,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $receivers_data = $stmt->fetchAll();
                     
                     $sender_name = $_SESSION['full_name'] ?? $user_email;
-                    $base_url = 'http://' . $_SERVER['HTTP_HOST'] . '/WMSU-Receive-System';
+                    $_app_root2 = rtrim(str_replace('\\', '/', realpath(__DIR__ . '/..')), '/');
+                    $_doc_root2 = rtrim(str_replace('\\', '/', realpath($_SERVER['DOCUMENT_ROOT'])), '/');
+                    $_rel2 = str_replace($_doc_root2, '', $_app_root2);
+                    $base_url = 'http://' . $_SERVER['HTTP_HOST'] . rtrim($_rel2, '/');
                     
                     foreach ($receivers_data as $receiver) {
                         if (empty($receiver['email'])) continue;

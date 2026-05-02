@@ -3,10 +3,10 @@
 // db.php — PDO connection for InfinityFree
 // ============================================================
 
-define('DB_HOST', 'sql313.infinityfree.com');
-define('DB_NAME', 'if0_41778021_wmsu_documents');
-define('DB_USER', 'if0_41778021');
-define('DB_PASS', 'j4eMmEjEmt7kuuf');                    // ← PUT YOUR DATABASE PASSWORD HERE
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'wmsu_documents');
+define('DB_USER', 'root'); // ← change to your DB user
+define('DB_PASS', ''); // ← change to your DB password
 define('DB_PORT', '3306');
 
 function getPDO(): PDO {

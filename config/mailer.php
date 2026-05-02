@@ -18,13 +18,13 @@ function createMailer(): PHPMailer {
     $mail->isSMTP();
     $mail->Host       = 'smtp.gmail.com';
     $mail->SMTPAuth   = true;
-    $mail->Username   = 'eh202201365@wmsu.edu.ph';           // ← Keep or change
-    $mail->Password   = 'Dorkme#75';                  // ← Replace with real Gmail App Password
+    $mail->Username   = 'sardanijolouis27@gmail.com';           // ← Keep or change
+    $mail->Password   = 'hvwvfflefmupfqik';                  // ← Replace with real Gmail App Password
     $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
     $mail->Port       = 587;
 
     // ── Sender ────────────────────────────────────────────────
-    $mail->setFrom('eh202201365@wmsu.edu.ph', 'WMSU Document Management');
+    $mail->setFrom('sardanijolouis27@gmail.com', 'WMSU Document Management');
     $mail->CharSet = 'UTF-8';
 
     return $mail;
