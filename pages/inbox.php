@@ -94,8 +94,7 @@ $query = "
             END
         ) as resolved_type,
         df.file_path,
-        df.original_name as file_name,
-        df.ocr_text
+        df.original_name as file_name
     FROM document_recipients dr
     LEFT JOIN memorandum_orders m ON dr.document_id = m.id
         AND (dr.document_type = 'Memorandum Order' OR dr.document_type = '')
@@ -138,7 +137,6 @@ foreach ($documents as $doc) {
         $grouped_docs[$key]['files'][] = [
             'name'     => $doc['file_name'],
             'path'     => $doc['file_path'],
-            'ocr_text' => $doc['ocr_text'] ?? ''
         ];
     }
 }
@@ -564,20 +562,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     <div id="modalFiles" class="space-y-2"></div>
                     <p id="noFilesMsg" class="text-xs text-gray-400 hidden font-secondary">No files attached.</p>
                 </div>
-
-                <div id="ocrSection" class="hidden mt-4">
-                    <div class="flex items-center justify-between mb-2">
-                        <p class="text-xs font-semibold text-blue-700 font-secondary uppercase tracking-wide">
-                            📄 Extracted Text (Soft Copy)
-                        </p>
-                        <div class="flex gap-2">
-                            <button onclick="copyOcrText()" class="text-xs px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-secondary">Copy Text</button>
-                            <button onclick="downloadOcrPDF()" class="text-xs px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-secondary flex items-center gap-1">⬇ Download PDF</button>
-                        </div>
-                    </div>
-                    <div id="ocrTextBox" class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-gray-700 font-secondary whitespace-pre-wrap max-h-48 overflow-y-auto"></div>
-                    <p class="text-xs text-gray-400 mt-1 font-secondary">This text was automatically extracted from the uploaded image using OCR.</p>
-                </div>
             </div>
             
             <div class="p-6 border-t border-gray-200 bg-gray-50 flex-shrink-0">
@@ -718,8 +702,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             const noFilesMsg     = document.getElementById('noFilesMsg');
             filesContainer.innerHTML = '';
 
-            document.getElementById('ocrSection').classList.add('hidden');
-            document.getElementById('ocrTextBox').innerText = '';
 
             if (currentDocument.files && currentDocument.files.length > 0) {
                 noFilesMsg.classList.add('hidden');
@@ -738,12 +720,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
                         </svg>`;
                     filesContainer.appendChild(a);
-
-                    const ocrBox = document.getElementById('ocrTextBox');
-                    if (f.ocr_text && f.ocr_text.trim() !== '' && ocrBox.innerText.trim() === '') {
-                        ocrBox.innerText = f.ocr_text;
-                        document.getElementById('ocrSection').classList.remove('hidden');
-                    }
                 });
             } else {
                 noFilesMsg.classList.remove('hidden');
@@ -798,15 +774,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 Swal.fire({ icon: 'error', title: 'Error', text: 'Failed to mark document as received', confirmButtonColor: '#AA0003' });
             }
         });
-        
-        function copyOcrText() {
-            const text = document.getElementById('ocrTextBox').innerText;
-            navigator.clipboard.writeText(text).then(() => {
-                Swal.fire({ icon: 'success', title: 'Copied!', text: 'OCR text copied to clipboard.', timer: 1500, showConfirmButton: false });
-            }).catch(() => {
-                Swal.fire({ icon: 'error', title: 'Failed to copy', text: 'Please copy the text manually.', confirmButtonColor: '#AA0003' });
-            });
-        }
         
         function closeModal() {
             const modal = document.getElementById('documentModal');
@@ -892,99 +859,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     </script>
     <script src="../js/sidebar.js"></script>
 
-    <!-- jsPDF -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script>
-    function downloadOcrPDF() {
-        if (!currentDocument) return;
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-        const pageW  = doc.internal.pageSize.getWidth();
-        const pageH  = doc.internal.pageSize.getHeight();
-        const margin = 20;
-        const usableW = pageW - margin * 2;
-        let y = margin;
-
-        function checkPage(needed) {
-            if (y + needed > pageH - margin) { doc.addPage(); y = margin; drawPageBorder(); }
-        }
-        function drawPageBorder() {
-            doc.setDrawColor(170, 0, 3); doc.setLineWidth(0.5);
-            doc.rect(10, 10, pageW - 20, pageH - 20);
-        }
-        drawPageBorder();
-
-        doc.setFillColor(170, 0, 3);
-        doc.rect(margin, y, usableW, 18, 'F');
-        doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-        doc.text('Western Mindanao State University', pageW / 2, y + 7, { align: 'center' });
-        doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-        doc.text('Document Management System — Soft Copy', pageW / 2, y + 13, { align: 'center' });
-        y += 24;
-
-        doc.setDrawColor(170, 0, 3); doc.setLineWidth(0.8);
-        doc.line(margin, y, margin + usableW, y); y += 6;
-
-        const details = [
-            ['Document Type',   currentDocument.type   || 'N/A'],
-            ['Document No.',    currentDocument.number || 'N/A'],
-            ['Sender',          currentDocument.sender || 'N/A'],
-            ['Concerned Person',currentDocument.concerned || 'N/A'],
-            ['Subject',         currentDocument.subject || 'N/A'],
-            ['Date Issued',     currentDocument.issued  ? new Date(currentDocument.issued).toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric'}) : 'N/A'],
-            ['Received On',     currentDocument.date    ? new Date(currentDocument.date).toLocaleDateString('en-PH',{year:'numeric',month:'long',day:'numeric'})   : 'N/A'],
-        ];
-        const labelW = 48; const valueW = usableW - labelW - 2;
-        details.forEach(([label, value]) => {
-            doc.setFontSize(8.5);
-            const valueLines = doc.splitTextToSize(value, valueW);
-            const rowH = Math.max(7, valueLines.length * 5 + 2);
-            checkPage(rowH + 1);
-            doc.setFillColor(245,245,245); doc.rect(margin, y, labelW, rowH, 'F');
-            doc.setDrawColor(220,220,220); doc.setLineWidth(0.2); doc.rect(margin, y, labelW, rowH);
-            doc.setFont('helvetica','bold'); doc.setTextColor(80,80,80);
-            doc.text(label, margin+2, y+4.5);
-            doc.setFillColor(255,255,255); doc.rect(margin+labelW+2, y, valueW, rowH, 'F');
-            doc.rect(margin+labelW+2, y, valueW, rowH);
-            doc.setFont('helvetica','normal'); doc.setTextColor(30,30,30);
-            doc.text(valueLines, margin+labelW+4, y+4.5);
-            y += rowH + 1;
-        });
-        y += 6;
-
-        checkPage(14);
-        doc.setFillColor(219,234,254); doc.rect(margin, y, usableW, 10, 'F');
-        doc.setDrawColor(147,197,253); doc.setLineWidth(0.3); doc.rect(margin, y, usableW, 10);
-        doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(29,78,216);
-        doc.text('Extracted Text (Soft Copy)', margin+3, y+6.5); y += 13;
-
-        const rawText = document.getElementById('ocrTextBox').innerText.trim();
-        if (!rawText) {
-            doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(150,150,150);
-            doc.text('No extracted text available.', margin+3, y+5); y += 10;
-        } else {
-            doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(30,30,30);
-            const lines = doc.splitTextToSize(rawText, usableW-6); const lineH = 5.2;
-            lines.forEach(line => { checkPage(lineH+2); doc.text(line, margin+3, y); y += lineH; });
-        }
-        y += 8;
-
-        checkPage(12);
-        doc.setDrawColor(200,200,200); doc.setLineWidth(0.3); doc.line(margin, y, margin+usableW, y); y += 5;
-        const now = new Date().toLocaleString('en-PH',{year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
-        doc.setFont('helvetica','italic'); doc.setFontSize(7.5); doc.setTextColor(150,150,150);
-        doc.text('Generated by WMSU Document Management System on '+now, pageW/2, y+4, {align:'center'});
-        doc.text('This is a system-generated soft copy. Text was automatically extracted via OCR.', pageW/2, y+8.5, {align:'center'});
-
-        const totalPages = doc.internal.getNumberOfPages();
-        for (let p = 1; p <= totalPages; p++) {
-            doc.setPage(p); doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(150,150,150);
-            doc.text('Page '+p+' of '+totalPages, pageW-margin, pageH-12, {align:'right'});
-        }
-        const safeNum  = (currentDocument.number || 'document').replace(/[^a-zA-Z0-9-_]/g,'_');
-        const safeType = (currentDocument.type   || 'doc').replace(/\s+/g,'_');
-        doc.save('WMSU_'+safeType+'_'+safeNum+'_softcopy.pdf');
-    }
-    </script>
 </body>
 </html>

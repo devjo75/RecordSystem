@@ -146,8 +146,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $dest = UPLOAD_DIR . $stored_name;
                 
                 if (move_uploaded_file($_FILES['fileUpload']['tmp_name'][$i], $dest)) {
-                    // Only attach ocr_text for the first image file (index 0)
-                    $is_image = in_array($mime, ['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
                     $saved_files[] = [
                         'original_name' => $_FILES['fileUpload']['name'][$i],
                         'stored_name' => $stored_name,
@@ -155,7 +153,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'file_path' => 'uploads/documents/' . $stored_name,
                         'mime' => $mime,
                         'size' => $size,
-                        'ocr_text' => ($is_image && $i === 0) ? (trim($_POST['ocr_text'] ?? '') ?: null) : null,
                     ];
                 } else {
                     $file_errors[] = 'Failed to save: ' . $_FILES['fileUpload']['name'][$i];
@@ -286,8 +283,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!empty($saved_files)) {
                     $file_stmt = $pdo->prepare("
                         INSERT INTO document_files 
-                            (document_type, document_id, original_name, stored_name, file_path, mime_type, file_size, ocr_text)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            (document_type, document_id, original_name, stored_name, file_path, mime_type, file_size)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
                     ");
                     
                     foreach ($saved_files as $f) {
@@ -299,7 +296,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $f['file_path'],
                             $f['mime'],
                             $f['size'],
-                            $f['ocr_text'] ?? null
                         ]);
                     }
                 }
@@ -701,23 +697,6 @@ $avatar_colors = [
                                     </label>
                                 </div>
                                 <div id="fileList" class="mt-3 space-y-2"></div>
-
-                                <!-- Hidden OCR text input submitted with form -->
-                                <input type="hidden" id="ocr_text_input" name="ocr_text">
-
-                                <!-- OCR Progress Bar (shown only for images) -->
-                                <div id="ocrProgress" class="hidden mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                                    <div class="flex items-center gap-2 mb-1">
-                                        <svg class="w-4 h-4 text-blue-600 animate-spin" fill="none" viewBox="0 0 24 24">
-                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
-                                        </svg>
-                                        <span id="ocrStatusText" class="text-xs text-blue-700 font-secondary font-semibold">Extracting text from image...</span>
-                                    </div>
-                                    <div class="w-full bg-blue-200 rounded-full h-1.5">
-                                        <div id="ocrProgressBar" class="bg-blue-600 h-1.5 rounded-full transition-all duration-300" style="width:0%"></div>
-                                    </div>
-                                </div>
                             </div>
 
                             <div class="border border-gray-200 rounded-lg p-4">
@@ -1171,116 +1150,5 @@ $avatar_colors = [
         });
     </script>
     <script src="../js/sidebar.js"></script>
-
-    <!-- Tesseract.js OCR -->
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    <script>
-        const ocrInput       = document.getElementById('ocr_text_input');
-        const ocrProgress    = document.getElementById('ocrProgress');
-        const ocrProgressBar = document.getElementById('ocrProgressBar');
-        const ocrStatusText  = document.getElementById('ocrStatusText');
-        const submitBtn      = document.getElementById('submitBtn');
-
-        let ocrRunning = false;
-
-        function isImageFile(file) {
-            return file && file.type.startsWith('image/');
-        }
-
-        function resetOcrUI() {
-            // Hide and fully reset the progress bar
-            ocrProgress.classList.add('hidden');
-            ocrProgress.classList.remove('bg-green-50', 'border-green-200');
-            ocrProgress.classList.add('bg-blue-50', 'border-blue-200');
-            ocrProgressBar.style.width = '0%';
-            ocrStatusText.classList.remove('text-green-700');
-            ocrStatusText.classList.add('text-blue-700');
-            ocrStatusText.textContent = 'Extracting text from image...';
-            ocrInput.value = '';
-        }
-
-        function setSubmitLocked(locked) {
-            submitBtn.disabled = locked;
-            if (locked) {
-                submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
-                submitBtn.classList.remove('hover:bg-crimson-800', 'hover:scale-[1.02]', 'active:scale-[0.98]');
-                submitBtn.title = 'Please wait — OCR is still extracting text from the image.';
-            } else {
-                submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                submitBtn.classList.add('hover:bg-crimson-800', 'hover:scale-[1.02]', 'active:scale-[0.98]');
-                submitBtn.title = '';
-            }
-        }
-
-        async function runOCR(file) {
-            ocrRunning = true;
-            setSubmitLocked(true);
-            ocrInput.value = '';
-            ocrProgress.classList.remove('hidden');
-            ocrProgressBar.style.width = '0%';
-            ocrStatusText.textContent = 'Extracting text from image...';
-
-            try {
-                const result = await Tesseract.recognize(file, 'eng', {
-                    logger: m => {
-                        if (m.status === 'recognizing text') {
-                            const pct = Math.round((m.progress || 0) * 100);
-                            ocrProgressBar.style.width = pct + '%';
-                            ocrStatusText.textContent = 'Extracting text... ' + pct + '%';
-                        }
-                    }
-                });
-                const extracted = result.data.text.trim();
-                ocrInput.value = extracted;
-                ocrProgressBar.style.width = '100%';
-                ocrStatusText.textContent = extracted
-                    ? '✓ Text extracted successfully (' + extracted.length + ' characters)'
-                    : '⚠ No text found in image.';
-                ocrProgress.classList.remove('bg-blue-50', 'border-blue-200');
-                ocrProgress.classList.add('bg-green-50', 'border-green-200');
-                ocrStatusText.classList.remove('text-blue-700');
-                ocrStatusText.classList.add('text-green-700');
-                // Hide the progress bar after 1 seconds
-                setTimeout(() => resetOcrUI(), 1000);
-            } catch (err) {
-                ocrStatusText.textContent = '⚠ OCR failed — image will be saved without text.';
-                ocrInput.value = '';
-            } finally {
-                ocrRunning = false;
-                setSubmitLocked(false);
-            }
-        }
-
-        // Override removeFile to also reset OCR if the removed file was an image
-        const _origRemoveFile = window.removeFile;
-        window.removeFile = function(index) {
-            // Check if the file being removed is the first image (the one OCR ran on)
-            const uploadedFilesSnap = document.getElementById('fileUpload').files;
-            const removingFirst = (index === 0);
-            _origRemoveFile(index);
-            // After removal, if no image remains as first file, reset OCR UI
-            const remaining = document.getElementById('fileUpload').files;
-            if (removingFirst || remaining.length === 0 || !isImageFile(remaining[0])) {
-                resetOcrUI();
-                // Also unlock submit if OCR was somehow still running
-                if (ocrRunning) {
-                    ocrRunning = false;
-                    setSubmitLocked(false);
-                }
-            }
-        };
-
-        // Hook into the existing file change event
-        const fileUploadEl = document.getElementById('fileUpload');
-        fileUploadEl.addEventListener('change', async () => {
-            const files = fileUploadEl.files;
-            if (files.length > 0 && isImageFile(files[0])) {
-                await runOCR(files[0]);
-            } else {
-                resetOcrUI();
-                setSubmitLocked(false);
-            }
-        });
-    </script>
 </body>
 </html>
