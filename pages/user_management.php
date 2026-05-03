@@ -213,30 +213,27 @@ $users = $pdo->query("
 
     <main class="lg:ml-64 min-h-screen">
 
-        <!-- Top Bar -->
         <header class="bg-white shadow-sm sticky top-0 z-20">
             <div class="px-4 sm:px-6 lg:px-8 py-4">
                 <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-3 min-w-0">
+                    <div class="flex items-center gap-3">
                         <button id="burgerBtn" class="lg:hidden flex flex-col justify-center items-center w-10 h-10 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0" aria-label="Toggle menu">
                             <span class="block w-5 h-0.5 bg-gray-700 mb-1 rounded"></span>
                             <span class="block w-5 h-0.5 bg-gray-700 mb-1 rounded"></span>
                             <span class="block w-5 h-0.5 bg-gray-700 rounded"></span>
                         </button>
-                        <div class="min-w-0">
-                            <h2 class="text-xl sm:text-2xl font-bold text-gray-800 font-main truncate">User Management</h2>
-                            <p class="hidden sm:block text-sm text-gray-600 mt-1 font-secondary">User management &amp; account overview</p>
+                        <div>
+                            <h2 class="text-2xl font-bold text-gray-800 font-main mb-1">User Management</h2>
+                            <p class="text-sm text-gray-600 font-secondary">User management &amp; account overview</p>
                         </div>
                     </div>
-                    <div class="flex items-center space-x-4">
-                        <div class="flex items-center space-x-3">
-                            <div class="hidden sm:block text-right">
-                                <p class="text-sm font-semibold text-gray-800 font-secondary"><?= htmlspecialchars($user_email ?: 'Guest User') ?></p>
-                                <p class="text-xs text-gray-600 font-secondary"><?= htmlspecialchars($user_role_display) ?></p>
-                            </div>
-                            <div class="w-10 h-10 bg-crimson-700 rounded-full flex items-center justify-center">
-                                <span class="text-white font-semibold font-secondary"><?= htmlspecialchars($user_initials) ?></span>
-                            </div>
+                    <div class="flex items-center gap-3">
+                        <div class="hidden sm:block text-right">
+                            <p class="font-semibold"><?= htmlspecialchars($user_email ?: 'Guest User') ?></p>
+                            <p class="text-xs text-gray-500"><?= htmlspecialchars($user_role_display) ?></p>
+                        </div>
+                        <div class="w-10 h-10 bg-crimson-700 rounded-full flex items-center justify-center text-white font-bold">
+                            <?= htmlspecialchars($user_initials) ?>
                         </div>
                     </div>
                 </div>

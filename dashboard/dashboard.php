@@ -11,6 +11,24 @@ if (!isset($_SESSION['user_id'])) {
 
 $pdo = getPDO();
 
+function getInitialsFromEmail($email) {
+    if (empty($email)) return 'U';
+    $namePart = explode('@', $email)[0];
+    $parts    = preg_split('/[._-]/', $namePart);
+    $initials = '';
+    foreach ($parts as $part) {
+        if (!empty($part)) $initials .= strtoupper(substr($part, 0, 1));
+        if (strlen($initials) >= 2) break;
+    }
+    return $initials ?: strtoupper(substr($email, 0, 1)) ?: 'U';
+}
+
+$user_email        = $_SESSION['user_email'] ?? '';
+$user_id           = $_SESSION['user_id'] ?? 0;
+$user_initials     = getInitialsFromEmail($user_email);
+$user_role         = $_SESSION['user_role']  ?? 'user';
+$user_role_display = ucfirst($user_role);
+
 // ── Filters ───────────────────────────────────────────────────
 $selected_month = $_GET['month'] ?? '';
 $selected_year  = $_GET['year']  ?? '';
@@ -230,35 +248,66 @@ $recent_activity = $pdo->query("
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Reports — WMSU Document Management</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: { extend: {
+                colors: { crimson: { 950:'#4D0001',900:'#800002',800:'#AA0003',700:'#D91619',600:'#FF3336',500:'#FF4D50',400:'#FF666A',300:'#FF8083',200:'#FF999D',100:'#FFB3B6',50:'#FFCCCE' } },
+                fontFamily: { main: ['"Noto Nastaliq Urdu"','serif'], secondary: ['"IBM Plex Sans"','sans-serif'] }
+            }}
+        }
+    </script>
     <style>
         body { font-family: 'IBM Plex Sans', sans-serif; }
+        h1,h2,h3,h4,h5,h6 { font-family: 'Noto Nastaliq Urdu', serif; }
     </style>
 </head>
 <body class="bg-gray-100">
-<div class="flex">
 
-    <?php
-        $active_page = 'reports';
-        include __DIR__ . '/../sidebar/sidebar.php';
-    ?>
+    <?php $active_page = 'reports'; include __DIR__ . '/../sidebar/sidebar.php'; ?>
 
-    <main class="flex-1 lg:ml-64 min-h-screen p-6">
+    <main class="lg:ml-64 min-h-screen">
 
-        <!-- Header -->
-        <div class="mb-6">
-            <h1 class="text-2xl font-bold text-gray-800">Document Reports</h1>
-            <p class="text-gray-500 text-sm mt-1">Overview of document activity by type and status</p>
-        </div>
+        <!-- Sticky Top Bar -->
+        <header class="bg-white shadow-sm sticky top-0 z-20">
+            <div class="px-4 sm:px-6 lg:px-8 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <button id="burgerBtn" class="lg:hidden flex flex-col justify-center items-center w-10 h-10 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0" aria-label="Toggle menu">
+                            <span class="block w-5 h-0.5 bg-gray-700 mb-1 rounded"></span>
+                            <span class="block w-5 h-0.5 bg-gray-700 mb-1 rounded"></span>
+                            <span class="block w-5 h-0.5 bg-gray-700 rounded"></span>
+                        </button>
+                        <div class="min-w-0">
+                            <h2 class="text-2xl font-bold text-gray-800 font-main mb-1">Document Reports</h2>
+                            <p class="hidden sm:block text-sm text-gray-600 mt-1 font-secondary">Overview of document activity by type and status</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="hidden sm:block text-right">
+                            <p class="text-sm font-semibold text-gray-800 font-secondary"><?= htmlspecialchars($user_email ?: 'Guest User') ?></p>
+                            <p class="text-xs text-gray-500 font-secondary"><?= htmlspecialchars($user_role_display) ?></p>
+                        </div>
+                        <div class="w-10 h-10 bg-crimson-700 rounded-full flex items-center justify-center text-white font-bold font-secondary">
+                            <?= htmlspecialchars($user_initials) ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="px-4 sm:px-6 lg:px-8 py-8">
 
         <!-- Filters -->
-        <form method="GET" class="bg-white rounded-xl shadow p-4 mb-6">
+        <form method="GET" class="bg-white rounded-xl shadow p-4 mb-6 font-secondary">
             <div class="flex flex-wrap items-end gap-4">
                 <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Filter By</label>
-                    <select name="filter_type" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" onchange="this.form.submit()">
+                    <label class="block text-xs font-semibold text-gray-600 mb-1 font-secondary">Filter By</label>
+                    <select name="filter_type" class="border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 font-secondary" onchange="this.form.submit()">
                         <option value="month" <?= $filter_type == 'month' ? 'selected' : '' ?>>Monthly</option>
                         <option value="year" <?= $filter_type == 'year' ? 'selected' : '' ?>>Yearly</option>
                         <option value="day" <?= $filter_type == 'day' ? 'selected' : '' ?>>Daily</option>
@@ -267,8 +316,8 @@ $recent_activity = $pdo->query("
                 
                 <?php if ($filter_type == 'day'): ?>
                 <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Day</label>
-                    <select name="day" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400">
+                    <label class="block text-xs font-semibold text-gray-600 mb-1 font-secondary">Day</label>
+                    <select name="day" class="border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 font-secondary">
                         <option value="">Select Day</option>
                         <?php for($d = 1; $d <= $days_in_month; $d++): ?>
                         <option value="<?= $d ?>" <?= $selected_day == $d ? 'selected' : '' ?>>
@@ -281,8 +330,8 @@ $recent_activity = $pdo->query("
                 
                 <?php if ($filter_type != 'year'): ?>
                 <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Month</label>
-                    <select name="month" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400">
+                    <label class="block text-xs font-semibold text-gray-600 mb-1 font-secondary">Month</label>
+                    <select name="month" class="border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 font-secondary">
                         <option value="">All Months</option>
                         <?php foreach ($months_list as $num => $name): ?>
                         <option value="<?= $num ?>" <?= $selected_month == $num ? 'selected' : '' ?>>
@@ -294,8 +343,8 @@ $recent_activity = $pdo->query("
                 <?php endif; ?>
                 
                 <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">Year</label>
-                    <select name="year" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400">
+                    <label class="block text-xs font-semibold text-gray-600 mb-1 font-secondary">Year</label>
+                    <select name="year" class="border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-crimson-700 focus:ring-2 focus:ring-crimson-200 font-secondary">
                         <option value="">All Years</option>
                         <?php foreach ($years as $yr): ?>
                         <option value="<?= $yr ?>" <?= $selected_year == $yr ? 'selected' : '' ?>>
@@ -306,12 +355,12 @@ $recent_activity = $pdo->query("
                 </div>
                 
                 <button type="submit"
-                    class="px-4 py-2 bg-red-700 text-white rounded-lg text-sm font-medium hover:bg-red-800 transition">
+                    class="px-4 py-2 bg-crimson-700 text-white rounded-lg text-sm font-semibold hover:bg-crimson-800 transition font-secondary">
                     Apply Filter
                 </button>
                 <?php if ($selected_month || $selected_year || $selected_day): ?>
                 <a href="reports.php"
-                    class="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition">
+                    class="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-semibold hover:bg-gray-200 transition font-secondary">
                     Clear
                 </a>
                 <?php endif; ?>
@@ -385,24 +434,24 @@ $recent_activity = $pdo->query("
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             <!-- Bar Chart: Per Document Type -->
             <div class="bg-white rounded-xl shadow p-6">
-                <h2 class="font-semibold text-gray-700 mb-1">Documents by Type</h2>
-                <p class="text-xs text-gray-400 mb-4">Document status distribution</p>
+                <h2 class="font-semibold text-gray-700 mb-1 font-main">Documents by Type</h2>
+                <p class="text-xs text-gray-400 mb-4 font-secondary">Document status distribution</p>
                 <canvas id="typeChart" height="220"></canvas>
             </div>
 
             <!-- Bar Chart: Trend -->
             <div class="bg-white rounded-xl shadow p-6">
-                <h2 class="font-semibold text-gray-700 mb-1">
+                <h2 class="font-semibold text-gray-700 mb-1 font-main">
                     <?= $filter_type == 'day' ? 'Daily' : ($filter_type == 'year' ? 'Yearly' : 'Monthly') ?> Trend
                 </h2>
-                <p class="text-xs text-gray-400 mb-4">Pending vs Received over time</p>
+                <p class="text-xs text-gray-400 mb-4 font-secondary">Pending vs Received over time</p>
                 <canvas id="trendChart" height="220"></canvas>
             </div>
         </div>
 
         <!-- Summary Table -->
         <div class="bg-white rounded-xl shadow p-6 mb-6">
-            <h2 class="font-semibold text-gray-700 mb-4">Detailed Breakdown</h2>
+            <h2 class="font-semibold text-gray-700 mb-4 font-main">Detailed Breakdown</h2>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead>
@@ -473,7 +522,7 @@ $recent_activity = $pdo->query("
 
         <!-- Recent Activity -->
         <div class="bg-white rounded-xl shadow p-6">
-            <h2 class="font-semibold text-gray-700 mb-4">Recent Document Activity</h2>
+            <h2 class="font-semibold text-gray-700 mb-4 font-main">Recent Document Activity</h2>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead>
@@ -521,9 +570,10 @@ $recent_activity = $pdo->query("
             </div>
         </div>
 
+        </div><!-- end px-4 py-8 -->
     </main>
-</div>
 
+<script src="../js/sidebar.js"></script>
 <script>
 // ── Chart.js defaults ─────────────────────────────────────────
 Chart.defaults.font.family = "'IBM Plex Sans', sans-serif";

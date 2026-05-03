@@ -215,7 +215,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                             <span class="block w-5 h-0.5 bg-gray-700 rounded"></span>
                         </button>
                         <div>
-                            <h2 class="text-2xl font-bold text-gray-800 font-main">Release Monitoring</h2>
+                            <h2 class="text-2xl font-bold text-gray-800 font-main mb-1">Release Monitoring</h2>
                             <p class="text-sm text-gray-600 font-secondary">Track who has acknowledged your documents</p>
                         </div>
                     </div>

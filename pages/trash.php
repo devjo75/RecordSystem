@@ -110,22 +110,22 @@ $trashed_releases = $relStmt->fetchAll(PDO::FETCH_ASSOC);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trash — WMSU Document Management</title>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script>
         tailwind.config = {
-            theme: {
-                extend: {
-                    colors: { crimson: { 50:'#FFCCCE', 100:'#FFB3B6', 700:'#D91619', 800:'#AA0003' } },
-                    fontFamily: { 'main': ['"Noto Nastaliq Urdu"', 'serif'], 'secondary': ['"IBM Plex Sans"', 'sans-serif'] }
-                }
-            }
+            theme: { extend: {
+                colors: { crimson: { 950:'#4D0001',900:'#800002',800:'#AA0003',700:'#D91619',600:'#FF3336',500:'#FF4D50',400:'#FF666A',300:'#FF8083',200:'#FF999D',100:'#FFB3B6',50:'#FFCCCE' } },
+                fontFamily: { main: ['"Noto Nastaliq Urdu"','serif'], secondary: ['"IBM Plex Sans"','sans-serif'] }
+            }}
         }
     </script>
     <style>
         body { font-family: 'IBM Plex Sans', sans-serif; }
-        /* Removed .row-actions opacity rules to ensure buttons are always visible */
+        h1,h2,h3,h4,h5,h6 { font-family: 'Noto Nastaliq Urdu', serif; }
         .trash-row { transition: all 0.2s ease; }
         .trash-row:hover { transform: translateY(-2px); }
     </style>
@@ -135,20 +135,34 @@ $trashed_releases = $relStmt->fetchAll(PDO::FETCH_ASSOC);
     <?php $active_page = 'trash'; include __DIR__ . '/../sidebar/sidebar.php'; ?>
 
     <main class="lg:ml-64 min-h-screen">
-        <!-- Top Bar -->
+
         <header class="bg-white shadow-sm sticky top-0 z-20">
-            <div class="px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-                <div>
-                    <h2 class="text-2xl font-bold text-gray-800 font-main">Trash</h2>
-                </div>
-                <div class="flex items-center gap-4">
-                    <?php if (!empty($trashed) || !empty($trashed_releases)): ?>
-                    <button id="emptyTrashBtn" class="px-4 py-2 bg-crimson-50 text-crimson-700 rounded-lg text-sm font-semibold hover:bg-crimson-100 transition font-secondary">
-                        Empty All Trash
-                    </button>
-                    <?php endif; ?>
-                    <div class="w-10 h-10 bg-crimson-800 rounded-full flex items-center justify-center text-white font-bold">
-                        <?= $user_initials ?>
+            <div class="px-4 sm:px-6 lg:px-8 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <button id="burgerBtn" class="lg:hidden flex flex-col justify-center items-center w-10 h-10 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0" aria-label="Toggle menu">
+                            <span class="block w-5 h-0.5 bg-gray-700 mb-1 rounded"></span>
+                            <span class="block w-5 h-0.5 bg-gray-700 mb-1 rounded"></span>
+                            <span class="block w-5 h-0.5 bg-gray-700 rounded"></span>
+                        </button>
+                        <div>
+                            <h2 class="text-2xl font-bold text-gray-800 font-main mb-2">Trash</h2>
+                            <p class="text-sm text-gray-600 font-secondary">Deleted messages and released documents</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <?php if (!empty($trashed) || !empty($trashed_releases)): ?>
+                        <button id="emptyTrashBtn" class="px-4 py-2 bg-crimson-50 text-crimson-700 rounded-lg text-sm font-semibold hover:bg-crimson-100 transition font-secondary">
+                            Empty All Trash
+                        </button>
+                        <?php endif; ?>
+                        <div class="hidden sm:block text-right">
+                            <p class="font-semibold"><?= htmlspecialchars($user_email ?: 'Guest User') ?></p>
+                            <p class="text-xs text-gray-500"><?= htmlspecialchars($user_role_display) ?></p>
+                        </div>
+                        <div class="w-10 h-10 bg-crimson-700 rounded-full flex items-center justify-center text-white font-bold">
+                            <?= htmlspecialchars($user_initials) ?>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -267,5 +281,6 @@ $trashed_releases = $relStmt->fetchAll(PDO::FETCH_ASSOC);
             if (res.success) location.reload();
         });
     </script>
+    <script src="../js/sidebar.js"></script>
 </body>
 </html>
