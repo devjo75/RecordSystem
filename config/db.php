@@ -5,8 +5,8 @@
 
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'wmsu_documents');
-define('DB_USER', 'root'); // ← change to your DB user
-define('DB_PASS', ''); // ← change to your DB password
+define('DB_USER', 'root'); 
+define('DB_PASS', ''); 
 define('DB_PORT', '3306');
 
 function getPDO(): PDO {

@@ -253,6 +253,9 @@ $recent_activity = $pdo->query("
     <link href="https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- PDF Export Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
     <script>
         tailwind.config = {
             theme: { extend: {
@@ -364,6 +367,14 @@ $recent_activity = $pdo->query("
                     Clear
                 </a>
                 <?php endif; ?>
+                <!-- NEW: Download PDF Button -->
+                <button type="button" id="downloadPdfBtn"
+                    class="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 transition font-secondary flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    Download PDF
+                </button>
             </div>
         </form>
 
@@ -449,11 +460,11 @@ $recent_activity = $pdo->query("
             </div>
         </div>
 
-        <!-- Summary Table -->
-        <div class="bg-white rounded-xl shadow p-6 mb-6">
+        <!-- Summary Table (added id) -->
+        <div class="bg-white rounded-xl shadow p-6 mb-6" id="breakdownTableContainer">
             <h2 class="font-semibold text-gray-700 mb-4 font-main">Detailed Breakdown</h2>
             <div class="overflow-x-auto">
-                <table class="w-full text-sm">
+                <table class="w-full text-sm" id="breakdownTable">
                     <thead>
                         <tr class="text-xs text-gray-400 uppercase border-b">
                             <th class="py-3 text-left">Document Type</th>
@@ -520,11 +531,11 @@ $recent_activity = $pdo->query("
             </div>
         </div>
 
-        <!-- Recent Activity -->
-        <div class="bg-white rounded-xl shadow p-6">
+        <!-- Recent Activity (added id) -->
+        <div class="bg-white rounded-xl shadow p-6" id="recentActivityContainer">
             <h2 class="font-semibold text-gray-700 mb-4 font-main">Recent Document Activity</h2>
             <div class="overflow-x-auto">
-                <table class="w-full text-sm">
+                <table class="w-full text-sm" id="recentActivityTable">
                     <thead>
                         <tr class="text-xs text-gray-400 uppercase border-b">
                             <th class="py-3 text-left">Document Type</th>
@@ -581,7 +592,7 @@ Chart.defaults.color = '#6B7280';
 
 // ── Bar Chart: Per Document Type ──────────────────────────────
 const typeCtx = document.getElementById('typeChart').getContext('2d');
-new Chart(typeCtx, {
+const typeChart = new Chart(typeCtx, {
     type: 'bar',
     data: {
         labels: <?= json_encode(array_column($data, 'label')) ?>,
@@ -633,7 +644,7 @@ new Chart(typeCtx, {
 
 // ── Bar Chart: Trend ──────────────────────────────────
 const trendCtx = document.getElementById('trendChart').getContext('2d');
-new Chart(trendCtx, {
+const trendChart = new Chart(trendCtx, {
     type: 'bar',
     data: {
         labels: <?= json_encode($trend_months) ?>,
@@ -673,6 +684,158 @@ new Chart(trendCtx, {
             }
         }
     }
+});
+
+// ── PDF Export ──────────────────────────────────────────────────
+document.getElementById('downloadPdfBtn').addEventListener('click', async function () {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    let y = margin;
+
+    // ── Header with Logo ────────────────────────────────────────
+    async function addHeader() {
+        // Draw red band background
+        doc.setFillColor(170, 0, 3);
+        doc.rect(margin, y, pageWidth - margin * 2, 18, 'F');
+        
+        // Attempt to load logo
+        const logoImg = new Image();
+        logoImg.src = '../logo.png';   // ← adjust path to your actual logo
+        logoImg.crossOrigin = 'Anonymous';
+        
+        try {
+            await new Promise((resolve, reject) => {
+                logoImg.onload = resolve;
+                logoImg.onerror = reject;
+            });
+            // Logo loaded – place it on the left
+            const logoWidth = 12;
+            const logoHeight = 12;
+            doc.addImage(logoImg, 'PNG', margin + 2, y + 3, logoWidth, logoHeight);
+            
+            doc.setTextColor(255, 255, 255);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(14);
+            doc.text('Western Mindanao State University', margin + 18, y + 10, { align: 'left' });
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.text('Document Management System — Analytics Report', margin + 18, y + 15, { align: 'left' });
+        } catch {
+            // Logo not found – fallback to centered text only
+            doc.setTextColor(255, 255, 255);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(14);
+            doc.text('Western Mindanao State University', pageWidth / 2, y + 8, { align: 'center' });
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.text('Document Management System — Analytics Report', pageWidth / 2, y + 14, { align: 'center' });
+        }
+        y += 24;
+    }
+
+    function addFilterInfo() {
+        doc.setFontSize(9);
+        doc.setTextColor(80);
+        let filterText = 'Filters: ';
+        <?php if ($filter_type == 'day' && $selected_day && $selected_month && $selected_year): ?>
+            filterText += 'Daily – <?= date('F j, Y', strtotime("$selected_year-$selected_month-$selected_day")) ?>';
+        <?php elseif ($filter_type == 'month' && $selected_month && $selected_year): ?>
+            filterText += 'Monthly – <?= $months_list[$selected_month] . ' ' . $selected_year ?>';
+        <?php elseif ($filter_type == 'year' && $selected_year): ?>
+            filterText += 'Yearly – <?= $selected_year ?>';
+        <?php else: ?>
+            filterText += 'All Time';
+        <?php endif; ?>
+        doc.text(filterText, margin, y);
+        y += 10;
+    }
+
+    function addSummary() {
+        doc.setFontSize(10);
+        doc.setTextColor(50);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Summary', margin, y);
+        doc.setFont('helvetica', 'normal');
+        y += 6;
+        const summaryLines = [
+            'Total Documents: <?= $total_all ?>',
+            'Pending: <?= $total_pending ?>',
+            'Sent: <?= $total_sent ?>',
+            'Received: <?= $total_received ?>',
+        ];
+        doc.setFontSize(9);
+        summaryLines.forEach(line => {
+            doc.text('• ' + line, margin + 4, y);
+            y += 5;
+        });
+        y += 4;
+    }
+
+    function addChartImage(canvasId, title, maxWidth = 180) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const imgData = canvas.toDataURL('image/png');
+        const imgWidth = maxWidth;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        if (y + imgHeight + 20 > pageHeight - margin) {
+            doc.addPage();
+            y = margin;
+        }
+        doc.setFontSize(10);
+        doc.setTextColor(50);
+        doc.setFont('helvetica', 'bold');
+        doc.text(title, margin, y);
+        y += 6;
+        doc.addImage(imgData, 'PNG', margin, y, imgWidth, imgHeight);
+        y += imgHeight + 6;
+    }
+
+    function addAutoTable(htmlTableId, title) {
+        const table = document.getElementById(htmlTableId);
+        if (!table) return;
+        if (y + 20 > pageHeight - margin) {
+            doc.addPage();
+            y = margin;
+        }
+        doc.setFontSize(10);
+        doc.setTextColor(50);
+        doc.setFont('helvetica', 'bold');
+        doc.text(title, margin, y);
+        y += 6;
+        doc.autoTable({
+            html: '#' + htmlTableId,
+            startY: y,
+            margin: { left: margin, right: margin },
+            styles: { fontSize: 7, cellPadding: 2 },
+            headStyles: { fillColor: [220, 220, 220], textColor: [80, 80, 80] },
+        });
+        y = doc.lastAutoTable.finalY + 6;
+    }
+
+    // Build PDF sequentially
+    await addHeader();
+    addFilterInfo();
+    addSummary();
+    addChartImage('typeChart', 'Documents by Type');
+    addChartImage('trendChart', 'Trend');
+    addAutoTable('breakdownTable', 'Detailed Breakdown');
+    addAutoTable('recentActivityTable', 'Recent Document Activity');
+
+    // Footer
+    const totalPages = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(7);
+        doc.setTextColor(150);
+        doc.text('Page ' + i + ' of ' + totalPages, pageWidth - margin, pageHeight - 10, { align: 'right' });
+        doc.text('Generated on ' + new Date().toLocaleString(), margin, pageHeight - 10);
+    }
+
+    // Save
+    doc.save('WMSU_Report_' + new Date().toISOString().slice(0,10) + '.pdf');
 });
 </script>
 
