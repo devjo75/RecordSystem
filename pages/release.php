@@ -416,6 +416,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     </div>
                 </div>
 
+                <!-- Concerned Faculty row -->
+                <div class="mb-6">
+                    <p class="text-gray-500 text-sm">Concerned Faculty</p>
+                    <p id="modalConcernedFaculty" class="font-medium text-gray-800"></p>
+                </div>
+
                 <div class="mb-6">
                     <p class="font-semibold mb-2">Acknowledgement Status</p>
                     <div class="flex justify-between text-xs mb-1">
@@ -511,6 +517,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             document.getElementById('modalDocNumber').textContent = doc.document_number;
             document.getElementById('modalSubject').textContent = doc.subject;
             document.getElementById('modalDate').textContent = new Date(doc.date_issued).toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+
+            // Concerned Faculty
+            const concernedEl = document.getElementById('modalConcernedFaculty');
+            if (doc.concerned_person && doc.concerned_person.trim() !== '') {
+                concernedEl.textContent = doc.concerned_person;
+            } else {
+                concernedEl.textContent = '—';
+            }
 
             const received = parseInt(doc.received_count) || 0;
             const total = parseInt(doc.total_recipients) || 0;
@@ -942,7 +956,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         this.disabled    = true;
         this.textContent = 'Moving…';
 
-        // Capture before closeReleaseDeleteModal() nulls them
         const targetId   = parseInt(_releaseDeleteDocId);
         const targetType = _releaseDeleteDocType;
 
@@ -958,7 +971,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             if (data.success) {
                 closeReleaseDeleteModal();
 
-                // Animate the matching card out immediately
                 document.querySelectorAll('.release-card').forEach(card => {
                     try {
                         const doc = JSON.parse(card.getAttribute('data-document'));
